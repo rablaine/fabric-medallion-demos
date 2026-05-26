@@ -12,9 +12,22 @@ Generated for resource group **{{ config.resource_group }}** in **{{ config.loca
 ## Deploy
 
 ### Windows / PowerShell
+
+Downloaded files are blocked by Windows ("Mark of the Web"). Unblock first, then run **`deploy.cmd`** (it launches pwsh 7 with the correct stdin handling — `pwsh -File` is broken for interactive scripts):
+
 ```powershell
+Get-ChildItem -Recurse | Unblock-File
+.\deploy.cmd
+```
+
+Or, if you're already in a `pwsh` 7 window opened from the Start menu / Windows Terminal:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
 .\deploy.ps1
 ```
+
+**Do not** use `pwsh -ExecutionPolicy Bypass -File .\deploy.ps1` from `powershell.exe` 5.1 — Read-Host hangs.
 
 ### macOS / Linux / WSL
 ```bash

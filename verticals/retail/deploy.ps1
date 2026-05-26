@@ -68,16 +68,32 @@ if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
 }
 Write-Ok "Azure CLI present"
 
-$account = az account show --output json 2>$null | ConvertFrom-Json
-if (-not $account) {
-    throw "Not logged into Azure CLI. Run 'az login' then re-run this script."
-}
-Write-Ok "Azure CLI authenticated as: $($account.user.name)"
-Write-Info "Subscription: $($account.name) ($($account.id))"
-Write-Info "Tenant:       $($account.tenantId)"
+# -----------------------------------------------------------------------------
+# Azure sign-in
+# -----------------------------------------------------------------------------
+# Always run `az login` so the user picks the correct account+subscription
+# for THIS deployment. Most users have a corporate account signed in that
+# isn't valid for personal/customer Azure resources.
+Write-Step "Azure sign-in"
+Write-Info "A browser window will open. Sign in with the account and pick the"
+Write-Info "subscription where these resources should be deployed."
+Write-Host ""
+
+az login --output none
+if ($LASTEXITCODE -ne 0) { throw "az login failed" }
+
+# Whatever sub az left active after login is the one we use.
+$selectedSub = az account show --output json | ConvertFrom-Json
+if (-not $selectedSub) { throw "Could not read active subscription after az login" }
+
+Write-Ok "Using account:      $($selectedSub.user.name)"
+Write-Ok "Using subscription: $($selectedSub.name)"
+Write-Info "Subscription ID: $($selectedSub.id)"
+Write-Info "Tenant:          $($selectedSub.tenantId)"
 
 # AAD object id of the signed-in user (becomes SQL admin)
 $signedInUser = az ad signed-in-user show --output json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or -not $signedInUser) { throw "Failed to read signed-in user identity from Entra" }
 $sqlAdminObjectId  = $signedInUser.id
 $sqlAdminLoginName = $signedInUser.userPrincipalName
 Write-Ok "Will grant SQL admin to: $sqlAdminLoginName"
@@ -103,11 +119,19 @@ Write-Ok "SqlServer module loaded"
 # -----------------------------------------------------------------------------
 Write-Step "Resource Group: $($config.RESOURCE_GROUP) in $($config.LOCATION)"
 
-$rgExists = az group exists --name $config.RESOURCE_GROUP | ConvertFrom-Json
+$rgExistsRaw = az group exists --name $config.RESOURCE_GROUP 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to check resource group existence: $rgExistsRaw"
+}
+$rgExists = $rgExistsRaw | ConvertFrom-Json
+
 if ($rgExists) {
     Write-Ok "Resource group already exists"
 } else {
     az group create --name $config.RESOURCE_GROUP --location $config.LOCATION --output none
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create resource group '$($config.RESOURCE_GROUP)'. You may not have Contributor on this subscription."
+    }
     Write-Ok "Resource group created"
 }
 

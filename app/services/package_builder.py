@@ -43,12 +43,12 @@ class PackageBuilder:
         # Render README from template if one exists
         self._render_readme(staging, config)
 
-        # Zip it up
+        # Zip it up - files at zip root (no nested folder)
         zip_path = out_dir / f"contoso-{self.vertical.id}-deployment.zip"
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for path in staging.rglob("*"):
                 if path.is_file():
-                    zf.write(path, path.relative_to(staging.parent))
+                    zf.write(path, path.relative_to(staging))
         return zip_path
 
     def _write_config(self, staging: Path, config: dict):
