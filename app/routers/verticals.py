@@ -19,8 +19,9 @@ async def vertical_detail(request: Request, vertical_id: str):
     if not vertical:
         raise HTTPException(status_code=404, detail=f"Vertical '{vertical_id}' not found")
     return templates.TemplateResponse(
+        request,
         "vertical_detail.html",
-        {"request": request, "vertical": vertical},
+        {"vertical": vertical},
     )
 
 
@@ -32,6 +33,7 @@ async def configure_vertical(request: Request, vertical_id: str):
     if not vertical:
         raise HTTPException(status_code=404, detail=f"Vertical '{vertical_id}' not found")
     return templates.TemplateResponse(
+        request,
         "configure.html",
-        {"request": request, "vertical": vertical},
+        {"vertical": vertical},
     )

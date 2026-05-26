@@ -12,7 +12,7 @@ async def generate_package(
     request: Request,
     vertical_id: str,
     resource_group: str = Form(...),
-    location: str = Form("eastus"),
+    location: str = Form("centralus"),
     scale: str = Form("small"),
     resource_prefix: str = Form("contoso"),
 ):

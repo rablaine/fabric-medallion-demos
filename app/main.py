@@ -36,8 +36,9 @@ app.include_router(deployment.router)
 async def home(request: Request):
     """Landing page - lists available verticals."""
     return templates.TemplateResponse(
+        request,
         "index.html",
-        {"request": request, "verticals": registry.list_verticals()},
+        {"verticals": registry.list_verticals()},
     )
 
 

@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Clickstream Event",
+  "description": "Web/mobile browsing event published to Event Hub by the storefront.",
+  "type": "object",
+  "required": ["event_id", "event_type", "session_id", "timestamp"],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique event identifier"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "page_view",
+        "product_view",
+        "search",
+        "add_to_cart",
+        "remove_from_cart",
+        "checkout_start",
+        "checkout_complete",
+        "purchase"
+      ]
+    },
+    "customer_id": {
+      "type": ["integer", "null"],
+      "description": "Null for anonymous sessions"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "page_url": {
+      "type": ["string", "null"]
+    },
+    "product_id": {
+      "type": ["integer", "null"]
+    },
+    "category_id": {
+      "type": ["integer", "null"]
+    },
+    "search_query": {
+      "type": ["string", "null"]
+    },
+    "search_results_count": {
+      "type": ["integer", "null"]
+    },
+    "referrer": {
+      "type": ["string", "null"]
+    },
+    "device_type": {
+      "type": "string",
+      "enum": ["desktop", "mobile", "tablet", "unknown"]
+    },
+    "user_agent": {
+      "type": ["string", "null"]
+    },
+    "ip_address": {
+      "type": ["string", "null"],
+      "description": "Anonymized at ingestion"
+    },
+    "geo": {
+      "type": ["object", "null"],
+      "properties": {
+        "country": { "type": "string" },
+        "region": { "type": "string" },
+        "city": { "type": "string" }
+      }
+    },
+    "cart_value": {
+      "type": ["number", "null"],
+      "description": "Snapshot of cart subtotal at time of event"
+    }
+  }
+}
