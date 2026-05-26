@@ -227,6 +227,12 @@ README.md
 - **Alternative**: Include Synapse option for customers not on Fabric yet
 - **Reasoning**: Fabric shows latest capabilities, but Synapse has broader adoption
 
+### Medallion + Source Mix ✅
+- **Detailed design**: see [docs/medallion-architecture.md](docs/medallion-architecture.md)
+- **Per vertical**: 5 sources, 4 distinct Fabric ingest patterns (Mirror, Shortcut, Eventstream, Pipeline/Notebook)
+- **Iterative loads**: `tick.py` injects new OLTP rows + dated file drops + watermark-based REST pulls so demos can show CDC / incremental / streaming on otherwise-static seed data
+- **Fabric capacity**: leaning bring-your-own-workspace; final decision before build
+
 ### Security & Permissions ✅
 - **Required Azure Permissions**: Contributor on subscription or resource group (user must have this already)
 - **Secrets Management**: Auto-generated, stored in Key Vault during deployment
@@ -273,3 +279,5 @@ README.md
 - [ ] Integration with Azure Cost Management for deployed resources?
 - [ ] Support for "tear down" / cleanup functionality in app?
 - [ ] Allow customization of schema/data before deployment?
+
+
