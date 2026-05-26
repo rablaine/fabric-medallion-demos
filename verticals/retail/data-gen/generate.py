@@ -467,18 +467,19 @@ def generate(scale: str) -> str:
             pid, _, _, _, list_price = random.choice(products)
             qty        = random.randint(1, 3)
             unit_price = round(list_price * random.uniform(0.85, 1.0), 2)
-            line_disc  = round(unit_price * qty * (0.1 if promo_id else 0), 2)
-            line_total = round(unit_price * qty - line_disc, 2)
+            line_gross = round(unit_price * qty, 2)
+            line_disc  = round(line_gross * (0.1 if promo_id else 0), 2)
+            line_total = round(line_gross - line_disc, 2)
             wh_id      = random.randint(1, len(WAREHOUSES))
-            subtotal  += line_total
+            subtotal  += line_gross   # pre-discount; schema's discount_amount tracks the reduction
             discount  += line_disc
             item_rows.append(
                 f"{order_id}, {pid}, {qty}, {unit_price}, {line_disc}, {line_total}, {wh_id}"
             )
 
-        tax      = round(subtotal * 0.08, 2)
-        shipping = 0.0 if subtotal > 99 else round(random.uniform(5.99, 14.99), 2)
-        total    = round(subtotal + tax + shipping - discount, 2)
+        tax      = round((subtotal - discount) * 0.08, 2)
+        shipping = 0.0 if (subtotal - discount) > 99 else round(random.uniform(5.99, 14.99), 2)
+        total    = round(subtotal - discount + tax + shipping, 2)
 
         statuses      = ["delivered", "delivered", "delivered", "shipped", "paid", "cancelled"]
         status_weights= [55, 15, 5, 10, 10, 5]

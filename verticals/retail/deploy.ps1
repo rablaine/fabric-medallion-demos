@@ -201,16 +201,19 @@ Write-Ok "Schema applied successfully"
 $seedPath = Join-Path $PSScriptRoot 'data' "seed-$($config.SCALE).sql"
 if (Test-Path $seedPath) {
     Write-Step "Loading seed data (seed-$($config.SCALE).sql)"
+    # Refresh AAD token in case the schema apply took a while
+    $tokenJson   = az account get-access-token --resource 'https://database.windows.net/' --output json | ConvertFrom-Json
+    $accessToken = $tokenJson.accessToken
     Invoke-Sqlcmd `
         -ServerInstance $outputs.sqlServerFqdn.value `
         -Database $outputs.sqlDatabaseName.value `
         -AccessToken $accessToken `
         -InputFile $seedPath `
-        -QueryTimeout 300 `
+        -QueryTimeout 600 `
         -ErrorAction Stop
     Write-Ok "Seed data loaded"
 } else {
-    Write-Warn2 "No seed file found at $seedPath — skipping seed load."
+    Write-Warn2 "No seed file found at $seedPath - skipping seed load."
     Write-Info  "To generate seed data: see data-gen/README.md"
 }
 
@@ -233,6 +236,6 @@ Write-Host "  DFS URL:    $($outputs.storageDfsEndpoint.value)"
 Write-Host "  Containers: $($outputs.rawContainer.value), $($outputs.curatedContainer.value)"
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Gray
-Write-Host "  - Connect via Azure Data Studio / SSMS using Entra auth" -ForegroundColor Gray
-Write-Host "  - Generate more data: cd data-gen && pip install -r requirements.txt && python generate.py --help" -ForegroundColor Gray
+Write-Host "  - Connect via Azure Data Studio / SSMS using Microsoft Entra auth" -ForegroundColor Gray
+Write-Host "  - Customize or generate larger datasets: see data-gen/README.md" -ForegroundColor Gray
 Write-Host ""
