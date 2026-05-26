@@ -11,8 +11,14 @@ param databaseName string
 @description('Azure region')
 param location string
 
-@description('SKU object {name, tier, capacity}')
+@description('SKU object {name, tier, family, capacity}')
 param sku object
+
+@description('Max database storage in GB')
+param maxSizeGb int
+
+@description('Auto-pause delay in minutes. -1 disables auto-pause. Default 60.')
+param autoPauseDelay int = 60
 
 @description('Object ID of AAD principal granted SQL admin')
 param sqlAdminObjectId string
@@ -58,6 +64,9 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   properties: {
     collation: 'SQL_Latin1_General_CP1_CI_AS'
     zoneRedundant: false
+    maxSizeBytes: maxSizeGb * 1024 * 1024 * 1024
+    autoPauseDelay: autoPauseDelay
+    minCapacity: json('0.5')  // Bicep has no decimal type; json() smuggles 0.5 through to ARM
   }
 }
 

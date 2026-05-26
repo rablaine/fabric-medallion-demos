@@ -40,10 +40,21 @@ param tags object = {
 // -----------------------------------------------------------------------------
 // SKU mapping
 // -----------------------------------------------------------------------------
+// Azure SQL: Serverless General Purpose (Gen5). Auto-pauses after 60 min idle
+// so the DB costs only ~$0.12/GB/mo of storage when no one is using it.
+// When woken (any connection), it scales between minCapacity and the SKU capacity.
+// Cold-start from paused: ~30-60s on the first query.
 var sqlSkuMap = {
-  small:  { name: 'Basic',     tier: 'Basic',         capacity: 5 }
-  medium: { name: 'S0',        tier: 'Standard',      capacity: 10 }
-  large:  { name: 'S2',        tier: 'Standard',      capacity: 50 }
+  small:  { name: 'GP_S_Gen5_2', tier: 'GeneralPurpose', family: 'Gen5', capacity: 2 }
+  medium: { name: 'GP_S_Gen5_4', tier: 'GeneralPurpose', family: 'Gen5', capacity: 4 }
+  large:  { name: 'GP_S_Gen5_8', tier: 'GeneralPurpose', family: 'Gen5', capacity: 8 }
+}
+
+// Per-scale database storage cap (GB).
+var sqlDbConfigMap = {
+  small:  { maxSizeGb: 32  }
+  medium: { maxSizeGb: 128 }
+  large:  { maxSizeGb: 512 }
 }
 
 var storageSkuMap = {
@@ -81,6 +92,7 @@ module sql 'modules/sql.bicep' = {
     databaseName: sqlDb
     location: location
     sku: sqlSkuMap[scale]
+    maxSizeGb: sqlDbConfigMap[scale].maxSizeGb
     sqlAdminObjectId: sqlAdminObjectId
     sqlAdminLoginName: sqlAdminLoginName
     clientIpAddress: clientIpAddress
