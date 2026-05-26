@@ -196,6 +196,25 @@ Invoke-Sqlcmd `
 Write-Ok "Schema applied successfully"
 
 # -----------------------------------------------------------------------------
+# Seed data
+# -----------------------------------------------------------------------------
+$seedPath = Join-Path $PSScriptRoot 'data' "seed-$($config.SCALE).sql"
+if (Test-Path $seedPath) {
+    Write-Step "Loading seed data (seed-$($config.SCALE).sql)"
+    Invoke-Sqlcmd `
+        -ServerInstance $outputs.sqlServerFqdn.value `
+        -Database $outputs.sqlDatabaseName.value `
+        -AccessToken $accessToken `
+        -InputFile $seedPath `
+        -QueryTimeout 300 `
+        -ErrorAction Stop
+    Write-Ok "Seed data loaded"
+} else {
+    Write-Warn2 "No seed file found at $seedPath — skipping seed load."
+    Write-Info  "To generate seed data: see data-gen/README.md"
+}
+
+# -----------------------------------------------------------------------------
 # Done
 # -----------------------------------------------------------------------------
 Write-Host ""
@@ -213,5 +232,7 @@ Write-Host "  Account:    $($outputs.storageAccount.value)"
 Write-Host "  DFS URL:    $($outputs.storageDfsEndpoint.value)"
 Write-Host "  Containers: $($outputs.rawContainer.value), $($outputs.curatedContainer.value)"
 Write-Host ""
-Write-Host "Next: synthetic data generation (coming soon)." -ForegroundColor Gray
+Write-Host "Next steps:" -ForegroundColor Gray
+Write-Host "  - Connect via Azure Data Studio / SSMS using Entra auth" -ForegroundColor Gray
+Write-Host "  - Generate more data: cd data-gen && pip install -r requirements.txt && python generate.py --help" -ForegroundColor Gray
 Write-Host ""
