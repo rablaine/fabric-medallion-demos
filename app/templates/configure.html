@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Configure {{ vertical.name }} - Contoso{% endblock %}
+
+{% block content %}
+<section class="configure">
+    <a href="/verticals/{{ vertical.id }}" class="back-link">&larr; Back to {{ vertical.name }}</a>
+    <h1>Configure {{ vertical.name }} Deployment</h1>
+    <p>Set your deployment parameters, then download a customized package that you can run with your own Azure CLI credentials.</p>
+
+    <form method="post" action="/deploy/{{ vertical.id }}/package" class="config-form">
+        <label>
+            Resource Group Name
+            <input type="text" name="resource_group" value="rg-contoso-{{ vertical.id }}" required>
+            <small>Will be created if it doesn't exist.</small>
+        </label>
+
+        <label>
+            Azure Region
+            <select name="location">
+                <option value="eastus" selected>East US</option>
+                <option value="eastus2">East US 2</option>
+                <option value="westus2">West US 2</option>
+                <option value="westus3">West US 3</option>
+                <option value="centralus">Central US</option>
+                <option value="northeurope">North Europe</option>
+                <option value="westeurope">West Europe</option>
+            </select>
+        </label>
+
+        <label>
+            Scale
+            <select name="scale">
+                {% for opt in vertical.scale_options %}
+                <option value="{{ opt }}"{% if opt == "small" %} selected{% endif %}>{{ opt|capitalize }}</option>
+                {% endfor %}
+            </select>
+            <small>Controls data volume and resource SKUs.</small>
+        </label>
+
+        <label>
+            Resource Name Prefix
+            <input type="text" name="resource_prefix" value="contoso" required pattern="[a-z0-9]+" maxlength="12">
+            <small>Lowercase letters and numbers only. Max 12 chars.</small>
+        </label>
+
+        <button type="submit" class="cta-button">Download Deployment Package</button>
+    </form>
+</section>
+{% endblock %}

@@ -1,0 +1,48 @@
+# Contoso Retail Deployment Package
+
+Generated for resource group **{{ config.resource_group }}** in **{{ config.location }}** at **{{ config.scale }}** scale.
+
+## Prerequisites
+
+- Azure CLI installed and authenticated (`az login`)
+- Contributor role on your subscription
+- Python 3.10+ (for synthetic data generation)
+- PowerShell 7+ (for `deploy.ps1`) **or** Bash 4+ (for `deploy.sh`)
+
+## Deploy
+
+### Windows / PowerShell
+```powershell
+.\deploy.ps1
+```
+
+### macOS / Linux / WSL
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
+
+## What This Deploys
+
+{% for service in vertical.azure_services -%}
+- {{ service }}
+{% endfor %}
+
+## After Deployment
+
+Open the deployed Power BI dashboard to see executive KPIs:
+
+{% for kpi in vertical.executive_kpis -%}
+- {{ kpi }}
+{% endfor %}
+
+## Configuration
+
+This package was generated with the following settings (see `deployment.config`):
+
+- **Resource Group**: `{{ config.resource_group }}`
+- **Location**: `{{ config.location }}`
+- **Scale**: `{{ config.scale }}`
+- **Resource Prefix**: `{{ config.resource_prefix }}`
+
+To change these, regenerate the package from the Contoso Data Estate Builder web app.

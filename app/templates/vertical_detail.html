@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}{{ vertical.name }} - Contoso{% endblock %}
+
+{% block content %}
+<section class="vertical-detail">
+    <a href="/" class="back-link">&larr; All verticals</a>
+    <h1>{{ vertical.name }}</h1>
+    <p class="status-badge status-{{ vertical.status }}">{{ vertical.status }}</p>
+    <p class="description">{{ vertical.description }}</p>
+
+    <h2>Azure Services Used</h2>
+    <ul>
+        {% for service in vertical.azure_services %}
+        <li>{{ service }}</li>
+        {% endfor %}
+    </ul>
+
+    <h2>Executive KPIs</h2>
+    <ul>
+        {% for kpi in vertical.executive_kpis %}
+        <li>{{ kpi }}</li>
+        {% endfor %}
+    </ul>
+
+    {% if vertical.status == "available" or vertical.status == "in-progress" %}
+    <a href="/verticals/{{ vertical.id }}/configure" class="cta-button">Configure Deployment &rarr;</a>
+    {% else %}
+    <p><em>This vertical is planned but not yet built.</em></p>
+    {% endif %}
+</section>
+{% endblock %}

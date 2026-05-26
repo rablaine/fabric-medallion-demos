@@ -1,0 +1,168 @@
+:root {
+    --bg: #0f1419;
+    --surface: #1a2129;
+    --surface-2: #232c36;
+    --border: #2f3a46;
+    --text: #e6edf3;
+    --text-muted: #8b98a8;
+    --accent: #4ea1ff;
+    --accent-hover: #6cb3ff;
+    --success: #3fb950;
+    --warning: #d29922;
+    --planned: #6e7681;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+}
+
+header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 2rem;
+}
+
+nav .brand {
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 1.1rem;
+}
+
+main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+footer {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 2rem;
+    font-size: 0.85rem;
+}
+
+.hero h1 {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+}
+
+.hero p {
+    color: var(--text-muted);
+    max-width: 700px;
+}
+
+.vertical-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+    margin-top: 2rem;
+}
+
+.vertical-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    text-decoration: none;
+    color: var(--text);
+    transition: transform 0.15s, border-color 0.15s;
+    display: block;
+}
+
+.vertical-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
+}
+
+.vertical-card h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1.2rem;
+}
+
+.vertical-card p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin: 0 0 1rem;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+}
+
+.status-available { color: var(--success); border: 1px solid var(--success); }
+.status-in-progress { color: var(--warning); border: 1px solid var(--warning); }
+.status-planned { color: var(--planned); border: 1px solid var(--planned); }
+
+.back-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.9rem;
+}
+
+.back-link:hover { color: var(--accent-hover); }
+
+.vertical-detail h1 { margin-top: 1rem; }
+.vertical-detail .description { color: var(--text-muted); }
+.vertical-detail ul { background: var(--surface); padding: 1rem 1rem 1rem 2rem; border-radius: 6px; border: 1px solid var(--border); }
+
+.cta-button {
+    display: inline-block;
+    background: var(--accent);
+    color: white;
+    padding: 0.75rem 1.5rem;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 600;
+    margin-top: 1.5rem;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+}
+
+.cta-button:hover { background: var(--accent-hover); }
+
+.config-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    max-width: 500px;
+    margin-top: 1.5rem;
+}
+
+.config-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-weight: 500;
+}
+
+.config-form input,
+.config-form select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.6rem;
+    border-radius: 6px;
+    font-size: 1rem;
+    font-family: inherit;
+}
+
+.config-form small {
+    color: var(--text-muted);
+    font-weight: normal;
+    font-size: 0.8rem;
+}

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero">
+    <h1>Pick an Industry Vertical</h1>
+    <p>Generate a complete Azure data estate deployment package for the industry of your choice. Configure, download, and deploy in your own subscription.</p>
+</section>
+
+<section class="vertical-grid">
+    {% for v in verticals %}
+    <a class="vertical-card status-{{ v.status }}" href="/verticals/{{ v.id }}">
+        <h2>{{ v.name }}</h2>
+        <p>{{ v.description }}</p>
+        <div class="meta">
+            <span class="status-badge">{{ v.status }}</span>
+        </div>
+    </a>
+    {% else %}
+    <p>No verticals loaded yet.</p>
+    {% endfor %}
+</section>
+{% endblock %}
