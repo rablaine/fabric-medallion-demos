@@ -38,14 +38,12 @@
         <div class="form-actions">
             <button type="submit" class="cta-button">Download Deployment Package</button>
             <button type="button" class="help-button" aria-label="What you'll get"
-                    onclick="document.getElementById('walkthrough-modal').showModal()">?</button>
+                    onclick="openWalkthrough()">?</button>
         </div>
     </form>
 
     <dialog id="walkthrough-modal" class="walkthrough-modal">
-        <form method="dialog" class="walkthrough-close-form">
-            <button class="walkthrough-close" aria-label="Close">&times;</button>
-        </form>
+        <button type="button" class="walkthrough-close" aria-label="Close" onclick="closeWalkthrough()">&times;</button>
         <h2>What you'll get &amp; what happens when you run it</h2>
         <p>
             You fill in the form, click <em>Download Deployment Package</em>, and
@@ -79,5 +77,24 @@
             <em>When you're done, pause the Fabric capacity (or delete the RG) to stop the bill.</em>
         </p>
     </dialog>
+
+    <script>
+        const walkthroughModal = document.getElementById('walkthrough-modal');
+        function openWalkthrough() { walkthroughModal.showModal(); }
+        function closeWalkthrough() {
+            walkthroughModal.classList.add('closing');
+            walkthroughModal.addEventListener('animationend', () => {
+                walkthroughModal.classList.remove('closing');
+                walkthroughModal.close();
+            }, { once: true });
+        }
+        walkthroughModal.addEventListener('click', (e) => {
+            if (e.target === walkthroughModal) closeWalkthrough();
+        });
+        walkthroughModal.addEventListener('cancel', (e) => {
+            e.preventDefault();
+            closeWalkthrough();
+        });
+    </script>
 </section>
 {% endblock %}

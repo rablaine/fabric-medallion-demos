@@ -179,6 +179,34 @@ footer {
 .walkthrough-modal::backdrop {
     background: rgba(0, 0, 0, 0.6);
 }
+.walkthrough-modal[open] {
+    animation: walkthrough-fade-in 150ms ease-out;
+}
+.walkthrough-modal[open]::backdrop {
+    animation: walkthrough-backdrop-in 150ms ease-out;
+}
+.walkthrough-modal.closing {
+    animation: walkthrough-fade-out 150ms ease-in forwards;
+}
+.walkthrough-modal.closing::backdrop {
+    animation: walkthrough-backdrop-out 150ms ease-in forwards;
+}
+@keyframes walkthrough-fade-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes walkthrough-fade-out {
+    from { opacity: 1; transform: translateY(0); }
+    to   { opacity: 0; transform: translateY(-4px); }
+}
+@keyframes walkthrough-backdrop-in {
+    from { background: rgba(0, 0, 0, 0); }
+    to   { background: rgba(0, 0, 0, 0.6); }
+}
+@keyframes walkthrough-backdrop-out {
+    from { background: rgba(0, 0, 0, 0.6); }
+    to   { background: rgba(0, 0, 0, 0); }
+}
 .walkthrough-modal h2 {
     margin: 0 0 0.5rem;
     font-size: 1.15rem;
@@ -199,11 +227,8 @@ footer {
     color: var(--accent-hover);
     text-decoration: underline;
 }
-.walkthrough-close-form {
-    margin: 0;
-    float: right;
-}
 .walkthrough-close {
+    float: right;
     background: transparent;
     border: none;
     color: var(--text-muted);
@@ -211,6 +236,7 @@ footer {
     line-height: 1;
     cursor: pointer;
     padding: 0;
+    margin-left: 0.5rem;
 }
 .walkthrough-close:hover { color: var(--text); }
 
