@@ -111,9 +111,12 @@ resource funcApp 'Microsoft.Web/sites@2024-04-01' = {
       minTlsVersion: '1.2'
       appSettings: [
         // Functions runtime
+        // NB: Linux Consumption does NOT use a content file share, so the
+        // WEBSITE_CONTENTAZUREFILECONNECTIONSTRING + WEBSITE_CONTENTSHARE
+        // pair (required on Windows Consumption / Premium) must be OMITTED.
+        // Setting them on Linux Y1 causes ARM to try creating a file share
+        // and fail with a 403 against the storage account.
         { name: 'AzureWebJobsStorage',             value: storageConnectionString }
-        { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', value: storageConnectionString }
-        { name: 'WEBSITE_CONTENTSHARE',            value: toLower(appName) }
         { name: 'FUNCTIONS_EXTENSION_VERSION',     value: '~4' }
         { name: 'FUNCTIONS_WORKER_RUNTIME',        value: 'python' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
