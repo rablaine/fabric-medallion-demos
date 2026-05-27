@@ -447,7 +447,7 @@ Write-Host "  DFS URL:    $($outputs.storageDfsEndpoint.value)"
 Write-Host "  Containers: $($outputs.rawContainer.value), $($outputs.curatedContainer.value)"
 Write-Host ""
 Write-Host "Fabric workspaces (capacity '$($outputs.fabricCapacityName.value)'):" -ForegroundColor Yellow
-Write-Host "  Bronze: contoso-retail-1-bronze   (id=$($workspaces['1-bronze'].id))"
+Write-Host "  Bronze: $($workspaces['1-bronze'].displayName)   (id=$($workspaces['1-bronze'].id))"
 Write-Host "  (silver + gold workspaces come in the next build phase)"
 Write-Host ""
 Write-Host "Bronze workspace contents:" -ForegroundColor Yellow
@@ -457,7 +457,7 @@ Write-Host "  Mirrored DB:      contoso_retail_sql_mirror (initial snapshot in p
 Write-Host "  Shortcut:         Files/raw -> $($outputs.storageAccount.value)/raw"
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Gray
-Write-Host "  - Open https://app.fabric.microsoft.com and find 'contoso-retail-1-bronze'" -ForegroundColor Gray
+Write-Host "  - Open https://app.fabric.microsoft.com and find '$($workspaces['1-bronze'].displayName)'" -ForegroundColor Gray
 Write-Host "  - Watch the Mirrored DB status; it should reach 'Running' within a minute or two" -ForegroundColor Gray
 Write-Host "  - Browse the lakehouse: Tables (from mirror) and Files/raw (from shortcut)" -ForegroundColor Gray
 Write-Host "  - When ready, ask the deployer to build out silver + gold + pipelines" -ForegroundColor Gray
