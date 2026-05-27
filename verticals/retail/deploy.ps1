@@ -337,7 +337,12 @@ Write-Step "Granting workspace identity SQL access + enabling change tracking"
 # CREATE USER until Entra has propagated. db_owner is the simplest grant that
 # satisfies both the initial mirror snapshot and ongoing change-tracking reads.
 $sqlToken = (az account get-access-token --resource 'https://database.windows.net/' --output json | ConvertFrom-Json).accessToken
-$wsIdent  = $wsIdentity.displayName
+# Use the workspace identity's applicationId (GUID) as the SQL principal name
+# instead of the workspace display name. AppId is globally unique in Entra, so
+# this avoids "duplicate display name" collisions when a prior deployment to
+# the same RG name left an orphan SP behind. SQL accepts the appId directly in
+# CREATE USER ... FROM EXTERNAL PROVIDER.
+$wsIdent  = $wsIdentity.applicationId
 $ctSql = @"
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'$wsIdent')
     CREATE USER [$wsIdent] FROM EXTERNAL PROVIDER;
