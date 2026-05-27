@@ -27,6 +27,15 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
 # -----------------------------------------------------------------------------
+# Tee everything to a timestamped log next to the script so the user has a
+# permanent record after the console closes (helpful for diagnosing failures).
+# Start-Transcript captures Write-Host output and Read-Host prompts both.
+# -----------------------------------------------------------------------------
+$logPath = Join-Path $PSScriptRoot ("deploy-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+try { Start-Transcript -Path $logPath -Append | Out-Null } catch { }
+Write-Host "Logging to $logPath" -ForegroundColor DarkGray
+
+# -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
 function Write-Step($msg)    { Write-Host "==> $msg" -ForegroundColor Cyan }
@@ -570,6 +579,10 @@ $teardownBody = @"
 #Requires -Version 7.0
 `$ErrorActionPreference = 'Stop'
 
+`$logPath = Join-Path `$PSScriptRoot ("teardown-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+try { Start-Transcript -Path `$logPath -Append | Out-Null } catch { }
+Write-Host "Logging to `$logPath" -ForegroundColor DarkGray
+
 `$ResourceGroup = '$($config.RESOURCE_GROUP)'
 `$Subscription  = '$($selectedSub.id)'
 `$CapacityName  = '$($outputs.fabricCapacityName.value)'
@@ -610,7 +623,22 @@ Write-Host 'Teardown initiated. Resource group deletion runs in the background.'
 Read-Host 'Press Enter to exit'
 "@
 Set-Content -Path $teardownPath -Value $teardownBody -Encoding UTF8
-Write-Host "Generated teardown.ps1 next to deploy.ps1 -- double-click when ready to clean up." -ForegroundColor Cyan
+
+# Matching .cmd launcher so the user can double-click without thinking about pwsh.
+$teardownCmdPath = Join-Path $PSScriptRoot 'teardown.cmd'
+$teardownCmdBody = @"
+@echo off
+REM Launcher: invokes pwsh 7 via -Command (NOT -File) so stdin/Read-Host work.
+REM Double-click this OR run ``teardown.cmd`` from any shell.
+pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '%~dp0teardown.ps1'"
+if errorlevel 1 (
+    echo.
+    echo Teardown failed. Press any key to close.
+    pause >nul
+)
+"@
+Set-Content -Path $teardownCmdPath -Value $teardownCmdBody -Encoding ASCII
+Write-Host "Generated teardown.ps1 + teardown.cmd next to deploy.ps1 -- double-click teardown.cmd when ready to clean up." -ForegroundColor Cyan
 Write-Host ""
 
 # Pause so the user sees the success message before the window closes.
