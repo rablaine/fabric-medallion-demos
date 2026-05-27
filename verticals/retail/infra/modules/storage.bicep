@@ -11,6 +11,9 @@ param location string
 @description('SKU name (Standard_LRS, Standard_ZRS, etc.)')
 param sku string
 
+@description('Object ID of the principal to grant Storage Blob Data Contributor (the deploying user, so notebooks running on their behalf can read/write ADLS)')
+param dataContributorObjectId string
+
 @description('Tags')
 param tags object
 
@@ -59,6 +62,22 @@ resource curatedContainer 'Microsoft.Storage/storageAccounts/blobServices/contai
   name: 'curated'
   properties: {
     publicAccess: 'None'
+  }
+}
+
+// -----------------------------------------------------------------------------
+// RBAC: grant the deploying user "Storage Blob Data Contributor" on the
+// account. The Fabric seeding notebook runs under the user's delegated
+// identity, so it inherits this grant to write CSV + Parquet files.
+// Role ID: ba92f5b4-2d11-453d-a403-e96b0029c9fe
+// -----------------------------------------------------------------------------
+resource blobDataContributorRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, dataContributorObjectId, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+  properties: {
+    principalId: dataContributorObjectId
+    principalType: 'User'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   }
 }
 

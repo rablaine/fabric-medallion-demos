@@ -166,9 +166,10 @@ if ($LASTEXITCODE -ne 0) {
 $deploy = $deployJson | ConvertFrom-Json
 $outputs = $deploy.properties.outputs
 Write-Ok "Bicep deployment succeeded"
-Write-Info "SQL Server:   $($outputs.sqlServerFqdn.value)"
-Write-Info "SQL Database: $($outputs.sqlDatabaseName.value)"
-Write-Info "Storage Acct: $($outputs.storageAccount.value)"
+Write-Info "SQL Server:       $($outputs.sqlServerFqdn.value)"
+Write-Info "SQL Database:     $($outputs.sqlDatabaseName.value)"
+Write-Info "Storage Acct:     $($outputs.storageAccount.value)"
+Write-Info "Fabric Capacity:  $($outputs.fabricCapacityName.value)"
 
 # -----------------------------------------------------------------------------
 # Apply schema
@@ -195,7 +196,100 @@ Invoke-Sqlcmd `
 Write-Ok "Schema applied successfully"
 
 # -----------------------------------------------------------------------------
-# Done
+# Fabric bootstrap (workspaces, lakehouses, notebooks, pipelines, seed run)
+# -----------------------------------------------------------------------------
+. (Join-Path $PSScriptRoot 'scripts' 'Fabric.ps1')
+
+Write-Step "Acquiring Fabric API token"
+$fabricToken = Get-FabricToken
+Write-Ok "Fabric token acquired"
+
+Write-Step "Resolving Fabric capacity GUID for '$($outputs.fabricCapacityName.value)'"
+# Bicep just provisioned the capacity; Fabric tenant may take a few seconds to see it.
+$capacityId = $null
+for ($i = 1; $i -le 12; $i++) {
+    try {
+        $capacityId = Get-FabricCapacityGuidFromArmId -Token $fabricToken -CapacityName $outputs.fabricCapacityName.value
+        break
+    } catch {
+        if ($i -eq 12) { throw }
+        Write-Info "Capacity not visible yet (attempt $i/12); waiting 10s..."
+        Start-Sleep -Seconds 10
+    }
+}
+Write-Ok "Fabric capacity GUID: $capacityId"
+
+$workspaceNames = @(
+    @{ Suffix = '1-bronze'; Description = 'Contoso Retail - Bronze (raw ingest + sim)' }
+)
+
+$workspaces = @{}
+foreach ($ws in $workspaceNames) {
+    $wsName = "contoso-retail-$($ws.Suffix)"
+    Write-Step "Creating Fabric workspace '$wsName'"
+    $created = New-FabricWorkspace -Token $fabricToken -Name $wsName -CapacityId $capacityId -Description $ws.Description
+    $workspaces[$ws.Suffix] = $created
+    Write-Ok "  id=$($created.id)"
+}
+
+Write-Step "Creating bronze lakehouse"
+$bronzeLh = New-FabricLakehouse -Token $fabricToken -WorkspaceId $workspaces['1-bronze'].id -Name 'contoso_retail_bronze'
+Write-Ok "  bronze lakehouse id=$($bronzeLh.id)"
+
+# -----------------------------------------------------------------------------
+# Upload + run seed notebook (populates Azure SQL + ADLS raw)
+# -----------------------------------------------------------------------------
+Write-Step "Uploading seed notebook 00_seed_historical_data"
+$seedNbPath = Join-Path $PSScriptRoot 'fabric' 'notebooks' '00_seed_historical_data.ipynb'
+$seedNb = New-FabricNotebookFromFile `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -Name '00_seed_historical_data' `
+    -NotebookPath $seedNbPath
+Write-Ok "  notebook id=$($seedNb.id)"
+
+Write-Step "Running seed notebook (this populates SQL + ADLS; ~10-20 min)"
+$nbParams = @{
+    sql_server_fqdn   = @{ value = $outputs.sqlServerFqdn.value; type = 'string' }
+    sql_database_name = @{ value = $outputs.sqlDatabaseName.value; type = 'string' }
+    storage_account   = @{ value = $outputs.storageAccount.value; type = 'string' }
+    raw_container     = @{ value = $outputs.rawContainer.value;   type = 'string' }
+}
+$jobResult = Invoke-FabricNotebook `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -NotebookId $seedNb.id `
+    -Parameters $nbParams `
+    -TimeoutSeconds 3600 `
+    -PollSeconds 20
+Write-Ok "Seed notebook completed (status=$($jobResult.status))"
+
+# -----------------------------------------------------------------------------
+# SQL Mirror + ADLS Shortcut (AFTER seed so initial snapshot is meaningful)
+# -----------------------------------------------------------------------------
+Write-Step "Creating Mirrored Database for Azure SQL -> bronze workspace"
+# Refresh Fabric token in case the seed run took close to the 1h expiry
+$fabricToken = Get-FabricToken
+$mirror = New-FabricMirroredAzureSqlDatabase `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -Name 'contoso_retail_sql_mirror' `
+    -SqlServerFqdn $outputs.sqlServerFqdn.value `
+    -DatabaseName $outputs.sqlDatabaseName.value
+Write-Ok "  mirrored db id=$($mirror.id) (initial snapshot starting; status updates in Fabric portal)"
+
+Write-Step "Creating ADLS shortcut from bronze lakehouse Files/raw -> $($outputs.storageAccount.value)/raw"
+$shortcut = New-FabricAdlsShortcut `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -LakehouseId $bronzeLh.id `
+    -ShortcutName 'raw' `
+    -StorageAccountName $outputs.storageAccount.value `
+    -Container $outputs.rawContainer.value
+Write-Ok "  shortcut created at Files/raw"
+
+# -----------------------------------------------------------------------------
+# Done (checkpoint 1: bronze-only, ready for manual silver/gold build-out)
 # -----------------------------------------------------------------------------
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
@@ -212,10 +306,22 @@ Write-Host "  Account:    $($outputs.storageAccount.value)"
 Write-Host "  DFS URL:    $($outputs.storageDfsEndpoint.value)"
 Write-Host "  Containers: $($outputs.rawContainer.value), $($outputs.curatedContainer.value)"
 Write-Host ""
+Write-Host "Fabric workspaces (capacity '$($outputs.fabricCapacityName.value)'):" -ForegroundColor Yellow
+Write-Host "  Bronze: contoso-retail-1-bronze   (id=$($workspaces['1-bronze'].id))"
+Write-Host "  (silver + gold workspaces come in the next build phase)"
+Write-Host ""
+Write-Host "Bronze workspace contents:" -ForegroundColor Yellow
+Write-Host "  Lakehouse:        contoso_retail_bronze"
+Write-Host "  Seed notebook:    00_seed_historical_data (already executed)"
+Write-Host "  Mirrored DB:      contoso_retail_sql_mirror (initial snapshot in progress)"
+Write-Host "  Shortcut:         Files/raw -> $($outputs.storageAccount.value)/raw"
+Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Gray
-Write-Host "  - Connect via Azure Data Studio / SSMS using Microsoft Entra auth" -ForegroundColor Gray
-Write-Host "  - Schema is applied; tables are empty. The historical seed notebook" -ForegroundColor Gray
-Write-Host "    (Phase B: Fabric) will populate a fiscal quarter of activity." -ForegroundColor Gray
+Write-Host "  - Open https://app.fabric.microsoft.com and find 'contoso-retail-1-bronze'" -ForegroundColor Gray
+Write-Host "  - Watch the Mirrored DB status; it should reach 'Running' within a minute or two" -ForegroundColor Gray
+Write-Host "  - Browse the lakehouse: Tables (from mirror) and Files/raw (from shortcut)" -ForegroundColor Gray
+Write-Host "  - When ready, ask the deployer to build out silver + gold + pipelines" -ForegroundColor Gray
+Write-Host "  - PAUSE the Fabric capacity in the Azure portal when not in use to save cost" -ForegroundColor Gray
 Write-Host ""
 
 # Pause so the user sees the success message before the window closes.

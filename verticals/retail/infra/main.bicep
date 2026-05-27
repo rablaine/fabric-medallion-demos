@@ -46,10 +46,11 @@ var sqlMaxSizeGb = 128
 var storageSku   = 'Standard_LRS'
 
 // Resource names (Azure has uniqueness rules per resource type)
-var suffix     = uniqueString(resourceGroup().id)
-var sqlServer  = toLower('${resourcePrefix}-retail-sql-${substring(suffix, 0, 6)}')
-var sqlDb      = 'contoso_retail'
-var storageAcc = toLower('${resourcePrefix}rt${substring(suffix, 0, 8)}') // storage = 3-24 lowercase alphanumeric
+var suffix         = uniqueString(resourceGroup().id)
+var sqlServer      = toLower('${resourcePrefix}-retail-sql-${substring(suffix, 0, 6)}')
+var sqlDb          = 'contoso_retail'
+var storageAcc     = toLower('${resourcePrefix}rt${substring(suffix, 0, 8)}') // storage = 3-24 lowercase alphanumeric
+var fabricCapacity = toLower('${resourcePrefix}retail${substring(suffix, 0, 8)}') // capacity name = lowercase alnum, globally unique in Fabric tenant
 
 // -----------------------------------------------------------------------------
 // Storage (ADLS Gen2)
@@ -60,6 +61,7 @@ module storage 'modules/storage.bicep' = {
     name: storageAcc
     location: location
     sku: storageSku
+    dataContributorObjectId: sqlAdminObjectId
     tags: tags
   }
 }
@@ -83,12 +85,27 @@ module sql 'modules/sql.bicep' = {
 }
 
 // -----------------------------------------------------------------------------
+// Fabric F2 capacity
+// -----------------------------------------------------------------------------
+module fabric 'modules/fabric.bicep' = {
+  name: 'fabric-deploy'
+  params: {
+    name: fabricCapacity
+    location: location
+    adminUserPrincipalName: sqlAdminLoginName
+    tags: tags
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Outputs
 // -----------------------------------------------------------------------------
-output sqlServerFqdn     string = sql.outputs.serverFqdn
-output sqlServerName     string = sqlServer
-output sqlDatabaseName   string = sqlDb
-output storageAccount    string = storage.outputs.storageAccountName
+output sqlServerFqdn      string = sql.outputs.serverFqdn
+output sqlServerName      string = sqlServer
+output sqlDatabaseName    string = sqlDb
+output storageAccount     string = storage.outputs.storageAccountName
 output storageDfsEndpoint string = storage.outputs.dfsEndpoint
-output rawContainer      string = storage.outputs.rawContainerName
-output curatedContainer  string = storage.outputs.curatedContainerName
+output rawContainer       string = storage.outputs.rawContainerName
+output curatedContainer   string = storage.outputs.curatedContainerName
+output fabricCapacityId   string = fabric.outputs.capacityId
+output fabricCapacityName string = fabric.outputs.capacityName
