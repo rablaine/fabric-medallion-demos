@@ -255,6 +255,16 @@ $bronzeLh = New-FabricLakehouse -Token $fabricToken -WorkspaceId $workspaces['1-
 Write-Ok "  bronze lakehouse id=$($bronzeLh.id)"
 
 # -----------------------------------------------------------------------------
+# Provision workspace identity EARLY so Entra propagation happens in the
+# background while the seed notebook is running (10-20 min). By the time we
+# need to CREATE USER FROM EXTERNAL PROVIDER below, the SP is visible.
+# -----------------------------------------------------------------------------
+Write-Step "Provisioning workspace identity for the bronze workspace"
+$wsIdentity = Enable-FabricWorkspaceIdentity -Token $fabricToken -WorkspaceId $workspaces['1-bronze'].id
+Write-Ok "  identity appId=$($wsIdentity.applicationId)"
+Write-Info "  Entra display name: $($wsIdentity.displayName) (propagating during seed run)"
+
+# -----------------------------------------------------------------------------
 # Upload + run seed notebook (populates Azure SQL + ADLS raw)
 # -----------------------------------------------------------------------------
 Write-Step "Uploading seed notebook 00_seed_historical_data"
@@ -304,12 +314,8 @@ Write-Ok "Seed notebook completed (status=$($jobResult.status))"
 # -----------------------------------------------------------------------------
 # SQL Mirror + ADLS Shortcut (AFTER seed so initial snapshot is meaningful)
 # -----------------------------------------------------------------------------
-Write-Step "Provisioning workspace identity for the bronze workspace"
 # Refresh Fabric token in case the seed run took close to the 1h expiry
 $fabricToken = Get-FabricToken
-$wsIdentity = Enable-FabricWorkspaceIdentity -Token $fabricToken -WorkspaceId $workspaces['1-bronze'].id
-Write-Ok "  identity appId=$($wsIdentity.applicationId)"
-Write-Info "  Entra display name: $($wsIdentity.displayName)"
 
 Write-Step "Granting workspace identity SQL access + enabling change tracking"
 # Workspace identity AAD propagation can lag 30-60s after provisioning. Retry
