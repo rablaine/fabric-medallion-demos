@@ -376,36 +376,127 @@ function Invoke-FabricNotebook {
 # Mirrored Database (Azure SQL -> bronze lakehouse via change feed)
 # -----------------------------------------------------------------------------
 
+function Enable-FabricWorkspaceIdentity {
+    <#
+    .SYNOPSIS
+        Provisions a system-assigned managed identity for the workspace. The
+        identity is created as a service principal in Entra with displayName
+        equal to the workspace name. Idempotent: returns existing identity
+        details if already provisioned.
+    .OUTPUTS
+        Hashtable with applicationId, servicePrincipalId, and displayName
+        (the workspace name, which is what you use in T-SQL CREATE USER FROM
+        EXTERNAL PROVIDER).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId
+    )
+
+    $ws = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId").Body
+    if (-not $ws.workspaceIdentity) {
+        $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/provisionIdentity"
+        if ($r.Status -eq 202 -and $r.OperationLocation) {
+            Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "provision workspace identity" | Out-Null
+        }
+        $ws = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId").Body
+    }
+    if (-not $ws.workspaceIdentity) {
+        throw "Workspace identity provisioning returned but identity is still missing on the workspace."
+    }
+    return @{
+        applicationId        = $ws.workspaceIdentity.applicationId
+        servicePrincipalId   = $ws.workspaceIdentity.servicePrincipalId
+        displayName          = $ws.displayName  # what T-SQL CREATE USER FROM EXTERNAL PROVIDER sees
+    }
+}
+
+function New-FabricSqlConnection {
+    <#
+    .SYNOPSIS
+        Creates a Fabric cloud connection of type SQL (Azure SQL DB) that
+        authenticates via a workspace identity. The returned connection ID is
+        used as source.typeProperties.connection on a Mirrored Database.
+    .DESCRIPTION
+        Idempotent on $DisplayName: if a connection with that name already
+        exists, returns its id.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$DisplayName,
+        [Parameter(Mandatory)] [string]$SqlServerFqdn,
+        [Parameter(Mandatory)] [string]$DatabaseName,
+        [Parameter(Mandatory)] [string]$WorkspaceId   # identity owner
+    )
+
+    # Check for an existing connection by display name
+    $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/connections").Body
+    $existing = $list.value | Where-Object { $_.displayName -eq $DisplayName } | Select-Object -First 1
+    if ($existing) { return $existing }
+
+    $body = @{
+        connectivityType  = 'ShareableCloud'
+        displayName       = $DisplayName
+        connectionDetails = @{
+            type           = 'SQL'
+            creationMethod = 'SQL'
+            parameters     = @(
+                @{ dataType = 'Text'; name = 'server';   value = $SqlServerFqdn }
+                @{ dataType = 'Text'; name = 'database'; value = $DatabaseName }
+            )
+        }
+        privacyLevel      = 'Organizational'
+        credentialDetails = @{
+            singleSignOnType     = 'None'
+            connectionEncryption = 'Encrypted'
+            skipTestConnection   = $false
+            credentials          = @{
+                credentialType = 'WorkspaceIdentity'
+                workspaceId    = $WorkspaceId
+            }
+        }
+    }
+
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/connections" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create connection $DisplayName" | Out-Null
+        $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/connections").Body
+        return $list.value | Where-Object { $_.displayName -eq $DisplayName } | Select-Object -First 1
+    }
+    return $r.Body
+}
+
 function New-FabricMirroredAzureSqlDatabase {
     <#
     .SYNOPSIS
         Creates a Mirrored Database item that replicates the given Azure SQL DB
-        into the workspace. Mirroring takes a one-time snapshot, then streams
-        changes via CDC. Best created AFTER the source DB has data so the
-        initial snapshot is meaningful.
+        into the workspace, authenticated via a pre-created Fabric connection
+        (typically WorkspaceIdentity-backed). Mirroring takes a one-time
+        snapshot, then streams changes via Change Tracking.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string]$Token,
         [Parameter(Mandatory)] [string]$WorkspaceId,
         [Parameter(Mandatory)] [string]$Name,
-        [Parameter(Mandatory)] [string]$SqlServerFqdn,
-        [Parameter(Mandatory)] [string]$DatabaseName
+        [Parameter(Mandatory)] [string]$ConnectionId
     )
 
-    # Mirror definition - tells Fabric what to mirror and how to authenticate.
-    # We mirror ALL tables; refine later via the Fabric portal if needed.
+    # Mirror definition references a Fabric connection by id (the connection
+    # owns the SQL endpoint + auth). We mirror ALL tables; refine later via
+    # the Fabric portal if needed.
     $mirroringJson = @{
         properties = @{
             source = @{
-                type = 'AzureSqlDatabase'
+                type           = 'AzureSqlDatabase'
                 typeProperties = @{
-                    endpoint = "$SqlServerFqdn,1433"
-                    database = $DatabaseName
+                    connection = $ConnectionId
                 }
             }
             target = @{
-                type = 'MountedRelationalDatabase'
+                type           = 'MountedRelationalDatabase'
                 typeProperties = @{
                     defaultSchema = 'dbo'
                     format        = 'Delta'

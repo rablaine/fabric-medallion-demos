@@ -304,15 +304,80 @@ Write-Ok "Seed notebook completed (status=$($jobResult.status))"
 # -----------------------------------------------------------------------------
 # SQL Mirror + ADLS Shortcut (AFTER seed so initial snapshot is meaningful)
 # -----------------------------------------------------------------------------
-Write-Step "Creating Mirrored Database for Azure SQL -> bronze workspace"
+Write-Step "Provisioning workspace identity for the bronze workspace"
 # Refresh Fabric token in case the seed run took close to the 1h expiry
 $fabricToken = Get-FabricToken
+$wsIdentity = Enable-FabricWorkspaceIdentity -Token $fabricToken -WorkspaceId $workspaces['1-bronze'].id
+Write-Ok "  identity appId=$($wsIdentity.applicationId)"
+Write-Info "  Entra display name: $($wsIdentity.displayName)"
+
+Write-Step "Granting workspace identity SQL access + enabling change tracking"
+# Workspace identity AAD propagation can lag 30-60s after provisioning. Retry
+# CREATE USER until Entra has propagated. db_owner is the simplest grant that
+# satisfies both the initial mirror snapshot and ongoing change-tracking reads.
+$sqlToken = (az account get-access-token --resource 'https://database.windows.net/' --output json | ConvertFrom-Json).accessToken
+$wsIdent  = $wsIdentity.displayName
+$ctSql = @"
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'$wsIdent')
+    CREATE USER [$wsIdent] FROM EXTERNAL PROVIDER;
+ALTER ROLE db_owner ADD MEMBER [$wsIdent];
+
+IF NOT EXISTS (SELECT 1 FROM sys.change_tracking_databases WHERE database_id = DB_ID())
+    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON (CHANGE_RETENTION = 2 DAYS, AUTO_CLEANUP = ON);
+
+DECLARE @t sysname, @s sysname, @sql nvarchar(max);
+DECLARE c CURSOR FOR
+    SELECT s.name, t.name
+    FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id
+    WHERE s.name = 'retail'
+      AND NOT EXISTS (SELECT 1 FROM sys.change_tracking_tables ct WHERE ct.object_id = t.object_id);
+OPEN c; FETCH NEXT FROM c INTO @s, @t;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @sql = N'ALTER TABLE [' + @s + N'].[' + @t + N'] ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = OFF);';
+    EXEC sp_executesql @sql;
+    FETCH NEXT FROM c INTO @s, @t;
+END
+CLOSE c; DEALLOCATE c;
+"@
+
+$ctDeadline = (Get-Date).AddSeconds(300)
+while ($true) {
+    try {
+        Invoke-Sqlcmd `
+            -ServerInstance $outputs.sqlServerFqdn.value `
+            -Database $outputs.sqlDatabaseName.value `
+            -AccessToken $sqlToken `
+            -Query $ctSql `
+            -QueryTimeout 180 `
+            -ErrorAction Stop
+        break
+    } catch {
+        if ($_.Exception.Message -match 'Principal .* could not be (resolved|found)|not found in the directory' -and (Get-Date) -lt $ctDeadline) {
+            Write-Info "  workspace identity not yet visible in Entra; retrying in 15s..."
+            Start-Sleep -Seconds 15
+            continue
+        }
+        throw
+    }
+}
+Write-Ok "  SQL grants applied; change tracking enabled on retail.* tables"
+
+Write-Step "Creating Fabric SQL connection (workspace identity auth)"
+$conn = New-FabricSqlConnection `
+    -Token $fabricToken `
+    -DisplayName "contoso_retail_sql ($($outputs.sqlServerFqdn.value))" `
+    -SqlServerFqdn $outputs.sqlServerFqdn.value `
+    -DatabaseName $outputs.sqlDatabaseName.value `
+    -WorkspaceId $workspaces['1-bronze'].id
+Write-Ok "  connection id=$($conn.id)"
+
+Write-Step "Creating Mirrored Database for Azure SQL -> bronze workspace"
 $mirror = New-FabricMirroredAzureSqlDatabase `
     -Token $fabricToken `
     -WorkspaceId $workspaces['1-bronze'].id `
     -Name 'contoso_retail_sql_mirror' `
-    -SqlServerFqdn $outputs.sqlServerFqdn.value `
-    -DatabaseName $outputs.sqlDatabaseName.value
+    -ConnectionId $conn.id
 Write-Ok "  mirrored db id=$($mirror.id) (initial snapshot starting; status updates in Fabric portal)"
 
 Write-Step "Creating ADLS shortcut from bronze lakehouse Files/raw -> $($outputs.storageAccount.value)/raw"
