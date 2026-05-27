@@ -62,6 +62,22 @@ resource funcStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
+// Linux Consumption + identity-based AzureWebJobsStorage requires a writable
+// container that Kudu uploads the built squashfs to (the URL is then read
+// back by the runtime via WEBSITE_RUN_FROM_PACKAGE). Without this container
+// pre-created, Kudu fails with 'Malformed SCM_RUN_FROM_PACKAGE'.
+resource scmBlobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: funcStorage
+  name: 'default'
+}
+resource scmReleases 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: scmBlobService
+  name: 'scm-releases'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Application Insights (with workspace-based -- requires a Log Analytics ws)
 // For simplicity here we use the classic (non-workspace) ApplicationInsights.
@@ -140,9 +156,19 @@ resource funcApp 'Microsoft.Web/sites@2024-04-01' = {
         // so Oryx runs pip install -r requirements.txt server-side).
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' }
         { name: 'ENABLE_ORYX_BUILD',              value: 'true' }
+
+        // Identity-based deploy target: Kudu uploads the built squashfs to
+        // this container using the Function MSI (which has Blob Data Owner
+        // via the role assignment below). Required because account keys are
+        // disabled and the legacy 'put SAS URL in WEBSITE_RUN_FROM_PACKAGE'
+        // path requires keys to mint the SAS.
+        { name: 'SCM_RUN_FROM_PACKAGE', value: '${funcStorage.properties.primaryEndpoints.blob}scm-releases' }
       ]
     }
   }
+  dependsOn: [
+    scmReleases  // container must exist before Kudu tries to upload the squashfs
+  ]
 }
 
 // -----------------------------------------------------------------------------
