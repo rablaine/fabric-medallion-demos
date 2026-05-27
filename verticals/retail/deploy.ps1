@@ -317,7 +317,24 @@ $seedNb = New-FabricNotebookFromFile `
 Remove-Item $bakedNbPath -ErrorAction SilentlyContinue
 Write-Ok "  notebook id=$($seedNb.id)"
 
-Write-Step "Running seed notebook (this populates SQL + ADLS; ~10-20 min)"
+Write-Step "Scaling SQL DB up for seed (GP_S_Gen5_8) -- about 30s"
+# Scale up the serverless DB just for the seed window. JDBC write throughput
+# is dominated by SQL-side parallelism and log throughput; bumping vCores from
+# 4 -> 8 roughly halves seed time. We scale back at the end so the demo runs
+# on its normal idle-cheap SKU.
+az sql db update `
+    --name $outputs.sqlDatabaseName.value `
+    --server $outputs.sqlServerName.value `
+    --resource-group $config.RESOURCE_GROUP `
+    --edition GeneralPurpose `
+    --family Gen5 `
+    --capacity 8 `
+    --compute-model Serverless `
+    --output none
+if ($LASTEXITCODE -ne 0) { throw "Failed to scale SQL up to Gen5_8" }
+Write-Ok "  scaled to GP_S_Gen5_8"
+
+Write-Step "Running seed notebook (populates SQL + ADLS)"
 $jobResult = Invoke-FabricNotebook `
     -Token $fabricToken `
     -WorkspaceId $workspaces['1-bronze'].id `
@@ -325,6 +342,19 @@ $jobResult = Invoke-FabricNotebook `
     -TimeoutSeconds 3600 `
     -PollSeconds 20
 Write-Ok "Seed notebook completed (status=$($jobResult.status))"
+
+Write-Step "Scaling SQL DB back down to idle-cheap SKU (GP_S_Gen5_4)"
+az sql db update `
+    --name $outputs.sqlDatabaseName.value `
+    --server $outputs.sqlServerName.value `
+    --resource-group $config.RESOURCE_GROUP `
+    --edition GeneralPurpose `
+    --family Gen5 `
+    --capacity 4 `
+    --compute-model Serverless `
+    --output none
+if ($LASTEXITCODE -ne 0) { Write-Info "  (non-fatal) SQL scale-down failed; please scale back manually" }
+else { Write-Ok "  scaled back to GP_S_Gen5_4" }
 
 # -----------------------------------------------------------------------------
 # SQL Mirror + ADLS Shortcut (AFTER seed so initial snapshot is meaningful)

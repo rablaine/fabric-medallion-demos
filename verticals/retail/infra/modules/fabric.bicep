@@ -1,12 +1,11 @@
 // =============================================================================
-// Microsoft Fabric Capacity (F2 SKU)
+// Microsoft Fabric Capacity (F8 SKU)
 // =============================================================================
-// F2 is the smallest paid Fabric SKU (~$262/mo if left running 24/7).
-// PAUSE the capacity in the Azure portal when not in use - all 3 workspaces
-// will continue to function for browsing but compute pauses.
+// F8 = ~$1.05/hr running, ~$760/mo if left on 24/7. PAUSE the capacity in the
+// Azure portal when not in use - workspaces remain browsable, compute stops.
 //
-// The capacity admin user (typically the deployer's UPN) is allowed to
-// assign workspaces to this capacity via the Fabric REST API.
+// Sized at F8 (not F2) so seed + Mirror initial snapshot + Eventstream + the
+// always-on Function emitter can all run concurrently without throttling.
 // =============================================================================
 
 @description('Capacity name. Lowercase alphanumeric, 3-63 chars, globally unique within the Fabric tenant.')
@@ -28,7 +27,7 @@ resource capacity 'Microsoft.Fabric/capacities@2023-11-01' = {
   location: location
   tags: tags
   sku: {
-    name: 'F2'
+    name: 'F8'
     tier: 'Fabric'
   }
   properties: {
