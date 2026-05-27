@@ -20,7 +20,7 @@
 
 | Resource | SKU | Notes |
 |---|---|---|
-| SQL Database | GP_S_Gen5_4 (Serverless, 4 vCore) | Auto-pauses after 60 min idle; 128 GB max |
+| SQL Database | GP_S_Gen5_8 (Serverless) at deploy time; scaled down to GP_S_Gen5_4 (4 vCore, min 0.5) after seed completes | Auto-pauses after 60 min idle; 128 GB max |
 | Storage | Standard_LRS | ADLS Gen2 with raw + curated containers |
 
 ## Phase 1 Scope

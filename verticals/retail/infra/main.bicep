@@ -41,7 +41,9 @@ param tags object = {
 // using it. Cold-start from paused: ~30-60s on the first query.
 // 4 vCore gives headroom to load a fiscal quarter of seed data in minutes
 // and run the bronze/silver/gold notebooks against it without throttling.
-var sqlSku       = { name: 'GP_S_Gen5_4', tier: 'GeneralPurpose', family: 'Gen5', capacity: 4 }
+// Deploy at Gen5_8 so the seed notebook has the throughput it needs out of
+// the gate; deploy.ps1 scales down to Gen5_4 (min 0.5) once the seed completes.
+var sqlSku       = { name: 'GP_S_Gen5_8', tier: 'GeneralPurpose', family: 'Gen5', capacity: 8 }
 var sqlMaxSizeGb = 128
 var storageSku   = 'Standard_LRS'
 

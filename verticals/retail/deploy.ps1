@@ -317,27 +317,9 @@ $seedNb = New-FabricNotebookFromFile `
 Remove-Item $bakedNbPath -ErrorAction SilentlyContinue
 Write-Ok "  notebook id=$($seedNb.id)"
 
-Write-Step "Scaling SQL DB up for seed (GP_S_Gen5_8) -- about 30s"
-# Scale up the serverless DB just for the seed window. JDBC write throughput
-# is dominated by SQL-side parallelism and log throughput; bumping vCores from
-# 4 -> 8 roughly halves seed time. We scale back at the end so the demo runs
-# on its normal idle-cheap SKU.
-# NB: serverless min_capacity must be valid for the target SLO. Gen5_8 requires
-# min >= 1.0; the original Gen5_4 sits at 0.5, so we MUST pass --min-capacity
-# explicitly on every scale call or the API rejects it as ProvisioningDisabled.
-az sql db update `
-    --name $outputs.sqlDatabaseName.value `
-    --server $outputs.sqlServerName.value `
-    --resource-group $config.RESOURCE_GROUP `
-    --edition GeneralPurpose `
-    --family Gen5 `
-    --capacity 8 `
-    --min-capacity 1.0 `
-    --compute-model Serverless `
-    --output none
-if ($LASTEXITCODE -ne 0) { throw "Failed to scale SQL up to Gen5_8" }
-Write-Ok "  scaled to GP_S_Gen5_8"
-
+# SQL DB is deployed at GP_S_Gen5_8 (min 1.0) so the seed has the throughput it
+# needs out of the gate -- no pre-seed scale-up call. We scale DOWN to Gen5_4
+# (min 0.5) after the seed completes so the demo runs on the idle-cheap SKU.
 Write-Step "Running seed notebook (populates SQL + ADLS)"
 $jobResult = Invoke-FabricNotebook `
     -Token $fabricToken `

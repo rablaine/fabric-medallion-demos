@@ -66,7 +66,7 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
     zoneRedundant: false
     maxSizeBytes: maxSizeGb * 1024 * 1024 * 1024
     autoPauseDelay: autoPauseDelay
-    minCapacity: json('0.5')  // Bicep has no decimal type; json() smuggles 0.5 through to ARM
+    minCapacity: json('1.0')  // Gen5_8 requires min >= 1.0; deploy.ps1 lowers to 0.5 when it scales the DB down to Gen5_4 post-seed. Bicep has no decimal type; json() smuggles the value through to ARM.
   }
 }
 
