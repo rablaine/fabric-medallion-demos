@@ -322,6 +322,9 @@ Write-Step "Scaling SQL DB up for seed (GP_S_Gen5_8) -- about 30s"
 # is dominated by SQL-side parallelism and log throughput; bumping vCores from
 # 4 -> 8 roughly halves seed time. We scale back at the end so the demo runs
 # on its normal idle-cheap SKU.
+# NB: serverless min_capacity must be valid for the target SLO. Gen5_8 requires
+# min >= 1.0; the original Gen5_4 sits at 0.5, so we MUST pass --min-capacity
+# explicitly on every scale call or the API rejects it as ProvisioningDisabled.
 az sql db update `
     --name $outputs.sqlDatabaseName.value `
     --server $outputs.sqlServerName.value `
@@ -329,6 +332,7 @@ az sql db update `
     --edition GeneralPurpose `
     --family Gen5 `
     --capacity 8 `
+    --min-capacity 1.0 `
     --compute-model Serverless `
     --output none
 if ($LASTEXITCODE -ne 0) { throw "Failed to scale SQL up to Gen5_8" }
@@ -351,6 +355,7 @@ az sql db update `
     --edition GeneralPurpose `
     --family Gen5 `
     --capacity 4 `
+    --min-capacity 0.5 `
     --compute-model Serverless `
     --output none
 if ($LASTEXITCODE -ne 0) { Write-Info "  (non-fatal) SQL scale-down failed; please scale back manually" }
