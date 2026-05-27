@@ -193,3 +193,11 @@ footer {
     line-height: 1.6;
 }
 .deploy-steps li { margin: 0.35rem 0; }
+.walkthrough a {
+    color: var(--accent);
+    text-decoration: none;
+}
+.walkthrough a:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}

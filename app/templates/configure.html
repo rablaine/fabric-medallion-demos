@@ -8,10 +8,40 @@
     <h1>Configure {{ vertical.name }} Deployment</h1>
     <p>Set your deployment parameters, then download a customized package that you can run with your own Azure CLI credentials.</p>
 
+    <form method="post" action="/deploy/{{ vertical.id }}/package" class="config-form">
+        <label>
+            Resource Group Name
+            <input type="text" name="resource_group" value="rg-contoso-{{ vertical.id }}" required>
+            <small>Will be created if it doesn't exist.</small>
+        </label>
+
+        <label>
+            Azure Region
+            <select name="location">
+                <option value="centralus" selected>Central US</option>
+                <option value="eastus">East US</option>
+                <option value="eastus2">East US 2</option>
+                <option value="westus2">West US 2</option>
+                <option value="westus3">West US 3</option>
+                <option value="southcentralus">South Central US</option>
+                <option value="northeurope">North Europe</option>
+                <option value="westeurope">West Europe</option>
+            </select>
+        </label>
+
+        <label>
+            Resource Name Prefix
+            <input type="text" name="resource_prefix" value="contoso" required pattern="[a-z0-9]+" maxlength="12">
+            <small>Lowercase letters and numbers only. Max 12 chars.</small>
+        </label>
+
+        <button type="submit" class="cta-button">Download Deployment Package</button>
+    </form>
+
     <details class="walkthrough" open>
         <summary><strong>What you'll get &amp; what happens when you run it</strong></summary>
         <p>
-            You fill in the form below, click <em>Download Deployment Package</em>, and
+            You fill in the form above, click <em>Download Deployment Package</em>, and
             get a zip with your settings baked in. Inside the zip is <code>deploy.cmd</code>.
             Running it prompts for your Azure account + subscription, then deploys
             everything in order:
@@ -42,35 +72,5 @@
             <em>When you're done, pause the Fabric capacity (or delete the RG) to stop the bill.</em>
         </p>
     </details>
-
-    <form method="post" action="/deploy/{{ vertical.id }}/package" class="config-form">
-        <label>
-            Resource Group Name
-            <input type="text" name="resource_group" value="rg-contoso-{{ vertical.id }}" required>
-            <small>Will be created if it doesn't exist.</small>
-        </label>
-
-        <label>
-            Azure Region
-            <select name="location">
-                <option value="centralus" selected>Central US</option>
-                <option value="eastus">East US</option>
-                <option value="eastus2">East US 2</option>
-                <option value="westus2">West US 2</option>
-                <option value="westus3">West US 3</option>
-                <option value="southcentralus">South Central US</option>
-                <option value="northeurope">North Europe</option>
-                <option value="westeurope">West Europe</option>
-            </select>
-        </label>
-
-        <label>
-            Resource Name Prefix
-            <input type="text" name="resource_prefix" value="contoso" required pattern="[a-z0-9]+" maxlength="12">
-            <small>Lowercase letters and numbers only. Max 12 chars.</small>
-        </label>
-
-        <button type="submit" class="cta-button">Download Deployment Package</button>
-    </form>
 </section>
 {% endblock %}
