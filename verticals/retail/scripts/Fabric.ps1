@@ -552,6 +552,60 @@ function New-FabricMirroredAzureSqlDatabase {
 # OneLake Shortcut (ADLS Gen2 -> bronze lakehouse Files area)
 # -----------------------------------------------------------------------------
 
+function New-FabricAdlsGen2Connection {
+    <#
+    .SYNOPSIS
+        Creates a Fabric cloud connection of type AzureDataLakeStorage Gen2
+        that authenticates via a workspace identity. The returned connection
+        ID is used as target.adlsGen2.connectionId on a shortcut.
+    .DESCRIPTION
+        Idempotent on $DisplayName: returns existing connection id if present.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$DisplayName,
+        [Parameter(Mandatory)] [string]$StorageAccountName,
+        [Parameter(Mandatory)] [string]$WorkspaceId
+    )
+
+    $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/connections").Body
+    $existing = $list.value | Where-Object { $_.displayName -eq $DisplayName } | Select-Object -First 1
+    if ($existing) { return $existing }
+
+    $server = "https://$StorageAccountName.dfs.core.windows.net"
+    $body = @{
+        connectivityType  = 'ShareableCloud'
+        displayName       = $DisplayName
+        connectionDetails = @{
+            type           = 'AzureDataLakeStorage'
+            creationMethod = 'AzureDataLakeStorage.Contents'
+            parameters     = @(
+                @{ dataType = 'Text'; name = 'server'; value = $server }
+                @{ dataType = 'Text'; name = 'path';   value = '/' }
+            )
+        }
+        privacyLevel      = 'Organizational'
+        credentialDetails = @{
+            singleSignOnType     = 'None'
+            connectionEncryption = 'Encrypted'
+            skipTestConnection   = $false
+            credentials          = @{
+                credentialType = 'WorkspaceIdentity'
+                workspaceId    = $WorkspaceId
+            }
+        }
+    }
+
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/connections" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create connection $DisplayName" | Out-Null
+        $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/connections").Body
+        return $list.value | Where-Object { $_.displayName -eq $DisplayName } | Select-Object -First 1
+    }
+    return $r.Body
+}
+
 function New-FabricAdlsShortcut {
     <#
     .SYNOPSIS
@@ -574,6 +628,7 @@ function New-FabricAdlsShortcut {
         [Parameter(Mandatory)] [string]$ShortcutName,
         [Parameter(Mandatory)] [string]$StorageAccountName,
         [Parameter(Mandatory)] [string]$Container,
+        [Parameter(Mandatory)] [string]$ConnectionId,
         [string]$SubPath = ''
     )
 
@@ -585,9 +640,9 @@ function New-FabricAdlsShortcut {
         name   = $ShortcutName
         target = @{
             adlsGen2 = @{
-                location          = $location
-                subpath           = $subPath
-                connectionId      = $null   # use the caller's identity (workspace identity / user)
+                location     = $location
+                subpath      = $subPath
+                connectionId = $ConnectionId
             }
         }
     }

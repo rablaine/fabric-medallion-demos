@@ -264,6 +264,21 @@ $wsIdentity = Enable-FabricWorkspaceIdentity -Token $fabricToken -WorkspaceId $w
 Write-Ok "  identity appId=$($wsIdentity.applicationId)"
 Write-Info "  Entra display name: $($wsIdentity.displayName) (propagating during seed run)"
 
+# Grant the workspace identity Storage Blob Data Reader on the storage account
+# so the ADLS shortcut connection can read raw/. RBAC propagation also overlaps
+# the seed run.
+Write-Step "Granting workspace identity 'Storage Blob Data Reader' on storage account"
+$storageId = az storage account show --name $outputs.storageAccount.value --resource-group $config.RESOURCE_GROUP --query id -o tsv
+if ($LASTEXITCODE -ne 0 -or -not $storageId) { throw "Failed to resolve storage account resource id" }
+az role assignment create `
+    --assignee-object-id $wsIdentity.servicePrincipalId `
+    --assignee-principal-type ServicePrincipal `
+    --role 'Storage Blob Data Reader' `
+    --scope $storageId `
+    --output none 2>&1 | Out-Null
+# Ignore "already exists" (exit 0 on success, non-zero with RoleAssignmentExists is fine too)
+Write-Ok "  role assignment requested (propagating during seed run)"
+
 # -----------------------------------------------------------------------------
 # Upload + run seed notebook (populates Azure SQL + ADLS raw)
 # -----------------------------------------------------------------------------
@@ -387,13 +402,21 @@ $mirror = New-FabricMirroredAzureSqlDatabase `
 Write-Ok "  mirrored db id=$($mirror.id) (initial snapshot starting; status updates in Fabric portal)"
 
 Write-Step "Creating ADLS shortcut from bronze lakehouse Files/raw -> $($outputs.storageAccount.value)/raw"
+$adlsConn = New-FabricAdlsGen2Connection `
+    -Token $fabricToken `
+    -DisplayName "contoso_retail_adls ($($outputs.storageAccount.value))" `
+    -StorageAccountName $outputs.storageAccount.value `
+    -WorkspaceId $workspaces['1-bronze'].id
+Write-Ok "  adls connection id=$($adlsConn.id)"
+
 $shortcut = New-FabricAdlsShortcut `
     -Token $fabricToken `
     -WorkspaceId $workspaces['1-bronze'].id `
     -LakehouseId $bronzeLh.id `
     -ShortcutName 'raw' `
     -StorageAccountName $outputs.storageAccount.value `
-    -Container $outputs.rawContainer.value
+    -Container $outputs.rawContainer.value `
+    -ConnectionId $adlsConn.id
 Write-Ok "  shortcut created at Files/raw"
 
 # -----------------------------------------------------------------------------
