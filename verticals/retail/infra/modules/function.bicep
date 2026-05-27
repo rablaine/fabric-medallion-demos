@@ -1,30 +1,32 @@
 // =============================================================================
-// Azure Function App on Linux Consumption (Y1) -- Python 3.11 timer-triggered
+// Azure Function App on Flex Consumption (FC1) -- Python 3.11 timer-triggered
 // emitter that pushes synthetic clickstream events into Event Hubs.
 //
-// Includes everything Functions requires:
-//   - Storage account (function host metadata + AzureWebJobsStorage)
-//   - App Insights (logs, exception tracking)
-//   - Linux Consumption serverFarm
-//   - Function App with system-assigned MSI (used to auth to Event Hub)
+// Why Flex Consumption (vs. classic Linux Consumption Y1):
+//   - Native identity-based AzureWebJobsStorage + identity-based deployment.
+//     Linux Consumption requires Kudu to upload a squashfs via the reserved
+//     SCM_RUN_FROM_PACKAGE setting, which ARM rejects from siteConfig.
+//     Without storage account keys (tenant policy here), that path is broken.
+//   - Same per-execution billing model and free grant.
+//   - Deploys via OneDeploy (POST /api/publish?type=zip) with AAD bearer.
 // =============================================================================
 
 @description('Function App name (3-60 chars, globally unique within *.azurewebsites.net)')
 param appName string
 
-@description('Storage account name dedicated to the Function (3-24 lowercase alphanumeric, globally unique). Functions runtime requires its own.')
+@description('Storage account name dedicated to the Function (3-24 lowercase alphanumeric, globally unique)')
 param storageAccountName string
 
 @description('Application Insights resource name')
 param appInsightsName string
 
-@description('Consumption plan (serverFarm) name')
+@description('Flex Consumption plan (serverFarm) name')
 param planName string
 
 @description('Azure region')
 param location string
 
-@description('Event Hubs namespace FQDN (e.g. contoso-eh-abc.servicebus.windows.net) -- passed to the function via app setting')
+@description('Event Hubs namespace FQDN -- passed to the function via app setting')
 param eventHubNamespaceFqdn string
 
 @description('Event Hub name (the hub to emit into)')
@@ -36,16 +38,15 @@ param timerSchedule string = '*/30 * * * * *'
 @description('Number of synthetic clickstream events to emit per timer fire')
 param eventsPerFire int = 50
 
-@description('Object ID of the deploying user -- granted Website Contributor on the Function App so they can call the Kudu zipdeploy REST endpoint with their AAD token (we cannot use storage keys, so az CLI zip-deploy is not an option).')
+@description('Object ID of the deploying user -- granted Website Contributor on the Function App so they can call OneDeploy with their AAD token')
 param deployerObjectId string
 
 @description('Tags to apply')
 param tags object = {}
 
 // -----------------------------------------------------------------------------
-// Storage account (Functions runtime requirement -- separate from data lake)
-// AAD-only: tenant policy forbids shared-key auth. Functions runtime + zip
-// deploy + WEBSITES_RUN_FROM_PACKAGE all use the Function App MSI instead.
+// Storage account (Functions runtime + deployment package storage).
+// AAD-only: tenant policy forbids shared-key auth.
 // -----------------------------------------------------------------------------
 resource funcStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
@@ -56,33 +57,29 @@ resource funcStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   properties: {
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
-    allowSharedKeyAccess: false      // hard-disable account keys (tenant policy)
+    allowSharedKeyAccess: false
     defaultToOAuthAuthentication: true
     supportsHttpsTrafficOnly: true
   }
 }
 
-// Linux Consumption + identity-based AzureWebJobsStorage requires a writable
-// container that Kudu uploads the built squashfs to (the URL is then read
-// back by the runtime via WEBSITE_RUN_FROM_PACKAGE). Without this container
-// pre-created, Kudu fails with 'Malformed SCM_RUN_FROM_PACKAGE'.
-resource scmBlobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+// Flex Consumption requires a pre-existing container for deployment packages.
+// The Function MSI writes here on OneDeploy; the runtime reads from here.
+// Container name is referenced from functionAppConfig.deployment.storage.
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
   parent: funcStorage
   name: 'default'
 }
-resource scmReleases 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
-  parent: scmBlobService
-  name: 'scm-releases'
+resource deployPkgContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'deploymentpackage'
   properties: {
     publicAccess: 'None'
   }
 }
 
 // -----------------------------------------------------------------------------
-// Application Insights (with workspace-based -- requires a Log Analytics ws)
-// For simplicity here we use the classic (non-workspace) ApplicationInsights.
-// Microsoft is sunsetting classic but it's still fully supported & is the
-// simplest one-resource deploy.
+// Application Insights (classic, non-workspace, for one-resource simplicity)
 // -----------------------------------------------------------------------------
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   name: appInsightsName
@@ -96,24 +93,24 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
 }
 
 // -----------------------------------------------------------------------------
-// Linux Consumption (Y1) plan
+// Flex Consumption plan (FC1, Linux)
 // -----------------------------------------------------------------------------
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: planName
   location: location
   tags: tags
   sku: {
-    name: 'Y1'
-    tier: 'Dynamic'
+    name: 'FC1'
+    tier: 'FlexConsumption'
   }
   kind: 'functionapp,linux'
   properties: {
-    reserved: true  // required for Linux
+    reserved: true
   }
 }
 
 // -----------------------------------------------------------------------------
-// Function App
+// Function App (Flex Consumption)
 // -----------------------------------------------------------------------------
 resource funcApp 'Microsoft.Web/sites@2024-04-01' = {
   name: appName
@@ -126,24 +123,37 @@ resource funcApp 'Microsoft.Web/sites@2024-04-01' = {
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
+    // Flex Consumption uses functionAppConfig (NOT siteConfig.linuxFxVersion)
+    // for runtime + deployment wiring. siteConfig is still used for ftps/tls
+    // hardening and the appSettings collection.
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${funcStorage.properties.primaryEndpoints.blob}deploymentpackage'
+          authentication: {
+            type: 'SystemAssignedIdentity'
+          }
+        }
+      }
+      runtime: {
+        name: 'python'
+        version: '3.11'
+      }
+      scaleAndConcurrency: {
+        // Keep it modest -- this is a 30-second timer, not a hot HTTP front end.
+        maximumInstanceCount: 40
+        instanceMemoryMB: 512
+      }
+    }
     siteConfig: {
-      linuxFxVersion: 'Python|3.11'
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
       appSettings: [
-        // Functions runtime -- IDENTITY-BASED storage (no account keys).
-        // The '__accountName' suffix tells the Functions host to authenticate
-        // with its own MSI via DefaultAzureCredential. Requires the MSI to
-        // hold Blob/Queue/Table Data roles on the storage account (assigned
-        // below). Setting plain 'AzureWebJobsStorage' to a key-based string
-        // would fail tenant policy.
-        // Linux Consumption does NOT use a content file share, so the
-        // WEBSITE_CONTENTAZUREFILECONNECTIONSTRING + WEBSITE_CONTENTSHARE
-        // pair (required on Windows Consumption / Premium) must be OMITTED.
+        // Identity-based AzureWebJobsStorage (no keys).
         { name: 'AzureWebJobsStorage__accountName', value: funcStorage.name }
         { name: 'AzureWebJobsStorage__credential',  value: 'managedidentity' }
-        { name: 'FUNCTIONS_EXTENSION_VERSION',      value: '~4' }
-        { name: 'FUNCTIONS_WORKER_RUNTIME',         value: 'python' }
+
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
 
         // Emitter wiring -- read by function_app.py
@@ -152,38 +162,33 @@ resource funcApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'TIMER_SCHEDULE',          value: timerSchedule }
         { name: 'EVENTS_PER_FIRE',         value: string(eventsPerFire) }
 
-        // Remote-build on zip deploy (required for Linux Consumption Python
-        // so Oryx runs pip install -r requirements.txt server-side).
-        { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' }
-        { name: 'ENABLE_ORYX_BUILD',              value: 'true' }
-
-        // Identity-based deploy target: Kudu uploads the built squashfs to
-        // this container using the Function MSI (which has Blob Data Owner
-        // via the role assignment below). Required because account keys are
-        // disabled and the legacy 'put SAS URL in WEBSITE_RUN_FROM_PACKAGE'
-        // path requires keys to mint the SAS.
-        { name: 'SCM_RUN_FROM_PACKAGE', value: '${funcStorage.properties.primaryEndpoints.blob}scm-releases' }
+        // NB: Flex Consumption does NOT use FUNCTIONS_EXTENSION_VERSION,
+        // FUNCTIONS_WORKER_RUNTIME, SCM_DO_BUILD_DURING_DEPLOYMENT, or any
+        // *_RUN_FROM_PACKAGE settings -- those are owned by functionAppConfig
+        // and the platform rejects them. pip install runs automatically on
+        // OneDeploy when the package contains a requirements.txt.
       ]
     }
   }
   dependsOn: [
-    scmReleases  // container must exist before Kudu tries to upload the squashfs
+    deployPkgContainer  // container must exist before OneDeploy uploads
   ]
 }
 
 // -----------------------------------------------------------------------------
-// RBAC: Function MSI needs read/write to its own storage account.
+// RBAC
 // Built-in role IDs:
 //   Storage Blob Data Owner          = b7e6dc6d-f1e8-4753-8033-0f276bb0955b
 //   Storage Queue Data Contributor   = 974c5e8b-45b9-4653-ba55-5f855dd0fb88
 //   Storage Table Data Contributor   = 0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3
-//   Website Contributor              = de139f84-1756-47ae-9be6-808fbbe84772 (for deployer to call Kudu)
+//   Website Contributor              = de139f84-1756-47ae-9be6-808fbbe84772
 // -----------------------------------------------------------------------------
-var roleBlobOwner   = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
-var roleQueueWriter = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
-var roleTableWriter = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+var roleBlobOwner          = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+var roleQueueWriter        = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+var roleTableWriter        = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 var roleWebsiteContributor = 'de139f84-1756-47ae-9be6-808fbbe84772'
 
+// Function MSI -- read/write its own storage (runtime + deployment package).
 resource msiBlob 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: funcStorage
   name: guid(funcStorage.id, funcApp.id, roleBlobOwner)
@@ -211,10 +216,9 @@ resource msiTable 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalType: 'ServicePrincipal'
   }
 }
-// Deployer (interactive user running deploy.ps1) gets Website Contributor on
-// the Function App so they can call the Kudu /api/zipdeploy endpoint with
-// their AAD bearer token. The az CLI zip-deploy needs storage keys and is
-// blocked by tenant policy; the Kudu REST API accepts an AAD token directly.
+
+// Deployer (interactive user) -- Website Contributor on the Function App so
+// they can call OneDeploy (POST /api/publish?type=zip) with their AAD token.
 resource deployerWebsite 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: funcApp
   name: guid(funcApp.id, deployerObjectId, roleWebsiteContributor)
@@ -224,6 +228,6 @@ resource deployerWebsite 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   }
 }
 
-output appName        string = funcApp.name
-output principalId    string = funcApp.identity.principalId
+output appName         string = funcApp.name
+output principalId     string = funcApp.identity.principalId
 output defaultHostname string = funcApp.properties.defaultHostName

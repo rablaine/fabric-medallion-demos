@@ -475,38 +475,40 @@ Write-Ok "  shortcut created at Files/raw"
 #
 # SCM_DO_BUILD_DURING_DEPLOYMENT + ENABLE_ORYX_BUILD are set in the Bicep,
 # so Oryx still runs server-side and pip-installs requirements.txt.
-Write-Step "Packaging + deploying clickstream Function code (Kudu REST, AAD auth)"
+Write-Step "Packaging + deploying clickstream Function code (OneDeploy, AAD auth)"
 $funcSrc  = Join-Path $PSScriptRoot 'functions\clickstream_emitter'
 $funcZip  = Join-Path $env:TEMP "clickstream_emitter_$([guid]::NewGuid().ToString('N')).zip"
 if (Test-Path $funcZip) { Remove-Item $funcZip -Force }
 Compress-Archive -Path (Join-Path $funcSrc '*') -DestinationPath $funcZip -Force
 Write-Info "  zipped -> $funcZip"
 
-# Bearer token for ARM (Kudu accepts ARM tokens for token-based auth).
-$kuduTok = az account get-access-token --resource https://management.azure.com --query accessToken -o tsv
-if (-not $kuduTok) { throw "Failed to get ARM token for Kudu deploy" }
-$kuduUri = "https://$($outputs.functionAppName.value).scm.azurewebsites.net/api/zipdeploy?isAsync=true"
+# Flex Consumption uses OneDeploy (NOT /api/zipdeploy). The endpoint accepts
+# AAD bearer tokens directly when the caller has Website Contributor on the
+# Function App (granted by function.bicep). Tenant policy blocks shared-key
+# auth so this is the only viable deployment path.
+$tok = az account get-access-token --resource https://management.azure.com --query accessToken -o tsv
+if (-not $tok) { throw "Failed to get ARM token for OneDeploy" }
+$publishUri = "https://$($outputs.functionAppName.value).scm.azurewebsites.net/api/publish?type=zip&RemoteBuild=true&Deployer=deploy.ps1"
 
 try {
-    $deployResp = Invoke-WebRequest -Uri $kuduUri `
+    $deployResp = Invoke-WebRequest -Uri $publishUri `
         -Method POST `
-        -Headers @{ Authorization = "Bearer $kuduTok" } `
+        -Headers @{ Authorization = "Bearer $tok" } `
         -InFile $funcZip `
         -ContentType 'application/zip' `
         -TimeoutSec 300 `
         -UseBasicParsing
 } catch {
     Remove-Item $funcZip -ErrorAction SilentlyContinue
-    throw "Kudu zipdeploy failed: $($_.Exception.Message)"
+    throw "OneDeploy failed: $($_.Exception.Message)"
 }
 
-# isAsync=true -> Kudu returns 202 with a Location header pointing at the
-# deployment status URI. Poll it until the build finishes (or fails).
+# OneDeploy returns 202 + Location header pointing at the build status URI.
 $statusUri = $deployResp.Headers.Location
 if ($statusUri -is [array]) { $statusUri = $statusUri[0] }
 if (-not $statusUri) {
     Remove-Item $funcZip -ErrorAction SilentlyContinue
-    throw "Kudu did not return a Location header for the async deploy"
+    throw "OneDeploy did not return a Location header"
 }
 Write-Info "  build queued; polling $statusUri"
 
@@ -514,18 +516,18 @@ $deadline = (Get-Date).AddMinutes(10)
 do {
     Start-Sleep -Seconds 10
     try {
-        $st = Invoke-RestMethod -Uri $statusUri -Headers @{ Authorization = "Bearer $kuduTok" } -TimeoutSec 60
+        $st = Invoke-RestMethod -Uri $statusUri -Headers @{ Authorization = "Bearer $tok" } -TimeoutSec 60
     } catch {
         Write-Info "    poll error (will retry): $($_.Exception.Message)"
         continue
     }
-    Write-Info ("    status={0} complete={1} active={2}" -f $st.status, $st.complete, $st.active)
+    Write-Info ("    status={0} complete={1}" -f $st.status, $st.complete)
 } while (-not $st.complete -and (Get-Date) -lt $deadline)
 
 Remove-Item $funcZip -ErrorAction SilentlyContinue
 
-# Kudu status codes: 3=Failed, 4=Success, 6=Building, 0/2=in-progress
 if (-not $st.complete) { throw "Function deploy timed out after 10 min" }
+# OneDeploy status codes: 3=Failed, 4=Success
 if ($st.status -ne 4)  { throw "Function deploy failed (status=$($st.status), see $($st.log_url))" }
 Write-Ok "  function deployed -> https://$($outputs.functionHostname.value)"
 Write-Info "  emitter fires every 30s -> Event Hub '$($outputs.eventHubName.value)' on $($outputs.eventHubFqdn.value)"
