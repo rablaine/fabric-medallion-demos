@@ -82,6 +82,17 @@ Write-Host ""
 az login --output none
 if ($LASTEXITCODE -ne 0) { throw "az login failed" }
 
+# Some tenants enforce CAE (Continuous Access Evaluation) on Microsoft Graph,
+# which causes `az ad signed-in-user show` to fail with InteractionRequired
+# even right after a fresh login. Force a Graph-scoped token now so any
+# interactive challenge happens here, not deeper in the script.
+az account get-access-token --resource https://graph.microsoft.com --output none 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Info "Graph token acquisition needs interactive consent (CAE)..."
+    az login --scope https://graph.microsoft.com/.default --output none
+    if ($LASTEXITCODE -ne 0) { throw "az login (Graph scope) failed" }
+}
+
 # Whatever sub az left active after login is the one we use.
 $selectedSub = az account show --output json | ConvertFrom-Json
 if (-not $selectedSub) { throw "Could not read active subscription after az login" }
