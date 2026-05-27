@@ -337,16 +337,20 @@ Write-Step "Granting workspace identity SQL access + enabling change tracking"
 # CREATE USER until Entra has propagated. db_owner is the simplest grant that
 # satisfies both the initial mirror snapshot and ongoing change-tracking reads.
 $sqlToken = (az account get-access-token --resource 'https://database.windows.net/' --output json | ConvertFrom-Json).accessToken
-# Use the workspace identity's applicationId (GUID) as the SQL principal name
-# instead of the workspace display name. AppId is globally unique in Entra, so
-# this avoids "duplicate display name" collisions when a prior deployment to
-# the same RG name left an orphan SP behind. SQL accepts the appId directly in
-# CREATE USER ... FROM EXTERNAL PROVIDER.
-$wsIdent  = $wsIdentity.applicationId
+# Workspace identity SP: pass both display name (friendly) and the SP's Entra
+# object id. WITH OBJECT_ID='<spOid>' tells Azure SQL to bind by Entra object
+# id directly instead of doing a Graph lookup by display name. This dodges
+# both (a) propagation lag (Graph lookup by name can take several minutes to
+# see a brand-new SP) and (b) duplicate-display-name errors from orphan SPs
+# left over from prior deployments to the same RG.
+# NOTE: OBJECT_ID wants the servicePrincipalId (Entra SP objectId), NOT the
+# applicationId. Fabric returns both on workspaceIdentity.
+$wsName = $wsIdentity.displayName
+$wsOid  = $wsIdentity.servicePrincipalId
 $ctSql = @"
-IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'$wsIdent')
-    CREATE USER [$wsIdent] FROM EXTERNAL PROVIDER;
-ALTER ROLE db_owner ADD MEMBER [$wsIdent];
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'$wsName')
+    CREATE USER [$wsName] FROM EXTERNAL PROVIDER WITH OBJECT_ID='$wsOid';
+ALTER ROLE db_owner ADD MEMBER [$wsName];
 
 IF NOT EXISTS (SELECT 1 FROM sys.change_tracking_databases WHERE database_id = DB_ID())
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON (CHANGE_RETENTION = 2 DAYS, AUTO_CLEANUP = ON);
