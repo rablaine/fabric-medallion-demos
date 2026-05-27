@@ -1,0 +1,13 @@
+# Local development settings only -- NOT deployed to Azure.
+# Copy to local.settings.json and fill in real values for `func start`.
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "EVENTHUB_NAMESPACE_FQDN": "<your-ns>.servicebus.windows.net",
+    "EVENTHUB_NAME": "clickstream",
+    "TIMER_SCHEDULE": "*/30 * * * * *",
+    "EVENTS_PER_FIRE": "50"
+  }
+}

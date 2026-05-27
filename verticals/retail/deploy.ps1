@@ -459,6 +459,33 @@ $shortcut = New-FabricAdlsShortcut `
 Write-Ok "  shortcut created at Files/raw"
 
 # -----------------------------------------------------------------------------
+# Function App deploy (clickstream emitter)
+# -----------------------------------------------------------------------------
+# The Function App + Event Hub were provisioned by Bicep; deploy the Python
+# code now via zip-deploy with Oryx remote build. SCM_DO_BUILD_DURING_DEPLOYMENT
+# is set in the Bicep so pip-install of requirements.txt happens on Azure side.
+Write-Step "Packaging + deploying clickstream Function code"
+$funcSrc  = Join-Path $PSScriptRoot 'functions\clickstream_emitter'
+$funcZip  = Join-Path $env:TEMP "clickstream_emitter_$([guid]::NewGuid().ToString('N')).zip"
+if (Test-Path $funcZip) { Remove-Item $funcZip -Force }
+Compress-Archive -Path (Join-Path $funcSrc '*') -DestinationPath $funcZip -Force
+Write-Info "  zipped -> $funcZip"
+
+az functionapp deployment source config-zip `
+    --resource-group $config.RESOURCE_GROUP `
+    --name $outputs.functionAppName.value `
+    --src $funcZip `
+    --build-remote true `
+    --output none
+if ($LASTEXITCODE -ne 0) {
+    Remove-Item $funcZip -ErrorAction SilentlyContinue
+    throw "Function zip-deploy failed"
+}
+Remove-Item $funcZip -ErrorAction SilentlyContinue
+Write-Ok "  function deployed -> https://$($outputs.functionHostname.value)"
+Write-Info "  emitter fires every 30s -> Event Hub '$($outputs.eventHubName.value)' on $($outputs.eventHubFqdn.value)"
+
+# -----------------------------------------------------------------------------
 # Done (checkpoint 1: bronze-only, ready for manual silver/gold build-out)
 # -----------------------------------------------------------------------------
 Write-Host ""
@@ -485,6 +512,10 @@ Write-Host "  Lakehouse:        contoso_retail_bronze"
 Write-Host "  Seed notebook:    00_seed_historical_data (already executed)"
 Write-Host "  Mirrored DB:      contoso_retail_sql_mirror (initial snapshot in progress)"
 Write-Host "  Shortcut:         Files/raw -> $($outputs.storageAccount.value)/raw"
+Write-Host ""
+Write-Host "Streaming source:" -ForegroundColor Yellow
+Write-Host "  Event Hub:        $($outputs.eventHubName.value) on $($outputs.eventHubFqdn.value)"
+Write-Host "  Emitter:          $($outputs.functionAppName.value) (fires every 30s, ~50 events/fire)"
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Gray
 Write-Host "  - Open https://app.fabric.microsoft.com and find '$($workspaces['1-bronze'].displayName)'" -ForegroundColor Gray

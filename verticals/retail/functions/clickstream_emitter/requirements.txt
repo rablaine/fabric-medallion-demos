@@ -1,0 +1,3 @@
+azure-functions==1.21.*
+azure-eventhub==5.13.*
+azure-identity==1.19.*

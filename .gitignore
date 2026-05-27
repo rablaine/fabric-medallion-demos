@@ -37,3 +37,5 @@ build/
 # Logs
 *.log
 logs/
+
+verticals/*/infra/main.json
