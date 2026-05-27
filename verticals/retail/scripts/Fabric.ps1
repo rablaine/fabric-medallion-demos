@@ -579,7 +579,7 @@ function New-FabricAdlsGen2Connection {
         displayName       = $DisplayName
         connectionDetails = @{
             type           = 'AzureDataLakeStorage'
-            creationMethod = 'AzureDataLakeStorage.Contents'
+            creationMethod = 'AzureDataLakeStorage'
             parameters     = @(
                 @{ dataType = 'Text'; name = 'server'; value = $server }
                 @{ dataType = 'Text'; name = 'path';   value = '/' }
