@@ -466,32 +466,67 @@ Write-Ok "  shortcut created at Files/raw"
 # -----------------------------------------------------------------------------
 # Function App deploy (clickstream emitter)
 # -----------------------------------------------------------------------------
-# The Function App + Event Hub were provisioned by Bicep; deploy the Python
-# code now via zip-deploy with Oryx remote build. SCM_DO_BUILD_DURING_DEPLOYMENT
-# is set in the Bicep so pip-install of requirements.txt happens on Azure side.
-Write-Step "Packaging + deploying clickstream Function code"
+# Tenant policy forbids storage account keys, so we cannot use
+# `az functionapp deployment source config-zip` (it uploads the package via
+# the storage account key). Instead we push directly to the Kudu zipdeploy
+# REST endpoint with an AAD bearer token. The deploying user was granted
+# Website Contributor on the Function App by the Bicep, which is what Kudu
+# requires for token-auth deploys.
+#
+# SCM_DO_BUILD_DURING_DEPLOYMENT + ENABLE_ORYX_BUILD are set in the Bicep,
+# so Oryx still runs server-side and pip-installs requirements.txt.
+Write-Step "Packaging + deploying clickstream Function code (Kudu REST, AAD auth)"
 $funcSrc  = Join-Path $PSScriptRoot 'functions\clickstream_emitter'
 $funcZip  = Join-Path $env:TEMP "clickstream_emitter_$([guid]::NewGuid().ToString('N')).zip"
 if (Test-Path $funcZip) { Remove-Item $funcZip -Force }
 Compress-Archive -Path (Join-Path $funcSrc '*') -DestinationPath $funcZip -Force
 Write-Info "  zipped -> $funcZip"
 
-az functionapp deployment source config-zip `
-    --resource-group $config.RESOURCE_GROUP `
-    --name $outputs.functionAppName.value `
-    --src $funcZip `
-    --output none
-# NB: do NOT pass --build-remote here. On Linux Consumption Python, that flag
-# actively strips ENABLE_ORYX_BUILD from app settings, which kills the pip
-# install of requirements.txt and produces a broken zip the Kudu builder
-# rejects (status=3, no log). The Bicep already sets
-# SCM_DO_BUILD_DURING_DEPLOYMENT=true + ENABLE_ORYX_BUILD=true, which is what
-# triggers Oryx server-side. Leave az CLI alone and let those drive it.
-if ($LASTEXITCODE -ne 0) {
+# Bearer token for ARM (Kudu accepts ARM tokens for token-based auth).
+$kuduTok = az account get-access-token --resource https://management.azure.com --query accessToken -o tsv
+if (-not $kuduTok) { throw "Failed to get ARM token for Kudu deploy" }
+$kuduUri = "https://$($outputs.functionAppName.value).scm.azurewebsites.net/api/zipdeploy?isAsync=true"
+
+try {
+    $deployResp = Invoke-WebRequest -Uri $kuduUri `
+        -Method POST `
+        -Headers @{ Authorization = "Bearer $kuduTok" } `
+        -InFile $funcZip `
+        -ContentType 'application/zip' `
+        -TimeoutSec 300 `
+        -UseBasicParsing
+} catch {
     Remove-Item $funcZip -ErrorAction SilentlyContinue
-    throw "Function zip-deploy failed"
+    throw "Kudu zipdeploy failed: $($_.Exception.Message)"
 }
+
+# isAsync=true -> Kudu returns 202 with a Location header pointing at the
+# deployment status URI. Poll it until the build finishes (or fails).
+$statusUri = $deployResp.Headers.Location
+if ($statusUri -is [array]) { $statusUri = $statusUri[0] }
+if (-not $statusUri) {
+    Remove-Item $funcZip -ErrorAction SilentlyContinue
+    throw "Kudu did not return a Location header for the async deploy"
+}
+Write-Info "  build queued; polling $statusUri"
+
+$deadline = (Get-Date).AddMinutes(10)
+do {
+    Start-Sleep -Seconds 10
+    try {
+        $st = Invoke-RestMethod -Uri $statusUri -Headers @{ Authorization = "Bearer $kuduTok" } -TimeoutSec 60
+    } catch {
+        Write-Info "    poll error (will retry): $($_.Exception.Message)"
+        continue
+    }
+    Write-Info ("    status={0} complete={1} active={2}" -f $st.status, $st.complete, $st.active)
+} while (-not $st.complete -and (Get-Date) -lt $deadline)
+
 Remove-Item $funcZip -ErrorAction SilentlyContinue
+
+# Kudu status codes: 3=Failed, 4=Success, 6=Building, 0/2=in-progress
+if (-not $st.complete) { throw "Function deploy timed out after 10 min" }
+if ($st.status -ne 4)  { throw "Function deploy failed (status=$($st.status), see $($st.log_url))" }
 Write-Ok "  function deployed -> https://$($outputs.functionHostname.value)"
 Write-Info "  emitter fires every 30s -> Event Hub '$($outputs.eventHubName.value)' on $($outputs.eventHubFqdn.value)"
 

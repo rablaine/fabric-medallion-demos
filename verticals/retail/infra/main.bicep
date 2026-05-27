@@ -120,6 +120,9 @@ module funcApp 'modules/function.bicep' = {
     // dependency cycle and can deploy in parallel.
     eventHubNamespaceFqdn: '${eventHubNs}.servicebus.windows.net'
     eventHubName: eventHubName
+    // Same principal that admins SQL also owns the Function -- gets Website
+    // Contributor so deploy.ps1 can push code via Kudu /api/zipdeploy.
+    deployerObjectId: sqlAdminObjectId
     tags: tags
   }
 }
