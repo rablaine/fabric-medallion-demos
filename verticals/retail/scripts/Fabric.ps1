@@ -437,9 +437,22 @@ function New-FabricMirroredAzureSqlDatabase {
     $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/mirroredDatabases"
     $created = $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
 
-    # Start mirroring
+    # Start mirroring (retry while item is still Initializing -- can take
+    # 30-90s after creation before Fabric accepts startMirroring)
     if ($created) {
-        Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/mirroredDatabases/$($created.id)/startMirroring" | Out-Null
+        $deadline = (Get-Date).AddSeconds(300)
+        while ($true) {
+            try {
+                Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/mirroredDatabases/$($created.id)/startMirroring" | Out-Null
+                break
+            } catch {
+                if ($_.Exception.Message -match 'Initializing' -and (Get-Date) -lt $deadline) {
+                    Start-Sleep -Seconds 10
+                    continue
+                }
+                throw
+            }
+        }
     }
     return $created
 }
