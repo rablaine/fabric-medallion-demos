@@ -109,3 +109,4 @@ output rawContainer       string = storage.outputs.rawContainerName
 output curatedContainer   string = storage.outputs.curatedContainerName
 output fabricCapacityId   string = fabric.outputs.capacityId
 output fabricCapacityName string = fabric.outputs.capacityName
+output uniqueSuffix       string = substring(suffix, 0, 8)

@@ -243,7 +243,7 @@ $workspaceNames = @(
 
 $workspaces = @{}
 foreach ($ws in $workspaceNames) {
-    $wsName = "contoso-retail-$($ws.Suffix)"
+    $wsName = "contoso-retail-$($ws.Suffix)-$($outputs.uniqueSuffix.value)"
     Write-Step "Creating Fabric workspace '$wsName'"
     $created = New-FabricWorkspace -Token $fabricToken -Name $wsName -CapacityId $capacityId -Description $ws.Description
     $workspaces[$ws.Suffix] = $created
