@@ -241,25 +241,44 @@ Write-Ok "  bronze lakehouse id=$($bronzeLh.id)"
 # -----------------------------------------------------------------------------
 Write-Step "Uploading seed notebook 00_seed_historical_data"
 $seedNbPath = Join-Path $PSScriptRoot 'fabric' 'notebooks' '00_seed_historical_data.ipynb'
+
+# Bake the resource names into the notebook source before upload.
+# Cleaner than Fabric's RunNotebook parameter injection (which inserts an
+# extra cell and is finicky). The notebook keeps empty-string defaults for
+# ad-hoc interactive re-runs in the portal.
+#
+# .ipynb is JSON, so quotes in cell source are escaped as \". We replace the
+# escaped empty-string defaults with escaped real values to keep JSON valid.
+$seedNbSrc = Get-Content -Raw -Path $seedNbPath
+$seedNbSrc = $seedNbSrc.Replace(
+    'sql_server_fqdn   = \"\"',
+    "sql_server_fqdn   = \`"$($outputs.sqlServerFqdn.value)\`""
+).Replace(
+    'sql_database_name = \"contoso_retail\"',
+    "sql_database_name = \`"$($outputs.sqlDatabaseName.value)\`""
+).Replace(
+    'storage_account   = \"\"',
+    "storage_account   = \`"$($outputs.storageAccount.value)\`""
+).Replace(
+    'raw_container     = \"raw\"',
+    "raw_container     = \`"$($outputs.rawContainer.value)\`""
+)
+$bakedNbPath = Join-Path ([System.IO.Path]::GetTempPath()) "00_seed_historical_data.baked.$([guid]::NewGuid()).ipynb"
+Set-Content -Path $bakedNbPath -Value $seedNbSrc -NoNewline -Encoding utf8
+
 $seedNb = New-FabricNotebookFromFile `
     -Token $fabricToken `
     -WorkspaceId $workspaces['1-bronze'].id `
     -Name '00_seed_historical_data' `
-    -NotebookPath $seedNbPath
+    -NotebookPath $bakedNbPath
+Remove-Item $bakedNbPath -ErrorAction SilentlyContinue
 Write-Ok "  notebook id=$($seedNb.id)"
 
 Write-Step "Running seed notebook (this populates SQL + ADLS; ~10-20 min)"
-$nbParams = @{
-    sql_server_fqdn   = @{ value = $outputs.sqlServerFqdn.value; type = 'string' }
-    sql_database_name = @{ value = $outputs.sqlDatabaseName.value; type = 'string' }
-    storage_account   = @{ value = $outputs.storageAccount.value; type = 'string' }
-    raw_container     = @{ value = $outputs.rawContainer.value;   type = 'string' }
-}
 $jobResult = Invoke-FabricNotebook `
     -Token $fabricToken `
     -WorkspaceId $workspaces['1-bronze'].id `
     -NotebookId $seedNb.id `
-    -Parameters $nbParams `
     -TimeoutSeconds 3600 `
     -PollSeconds 20
 Write-Ok "Seed notebook completed (status=$($jobResult.status))"
