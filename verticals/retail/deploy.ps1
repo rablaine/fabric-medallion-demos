@@ -84,11 +84,18 @@ if ($LASTEXITCODE -ne 0) { throw "az login failed" }
 
 # Some tenants enforce CAE (Continuous Access Evaluation) on Microsoft Graph,
 # which causes `az ad signed-in-user show` to fail with InteractionRequired
-# even right after a fresh login. Force a Graph-scoped token now so any
-# interactive challenge happens here, not deeper in the script.
+# even right after a fresh login -- because the local CLI token cache still
+# has the stale CAE-flagged Graph token. We have to nuke the cache and
+# re-login with an explicit Graph scope to get a clean Graph token.
 az account get-access-token --resource https://graph.microsoft.com --output none 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Info "Graph token acquisition needs interactive consent (CAE)..."
+$graphOk = ($LASTEXITCODE -eq 0)
+if ($graphOk) {
+    az ad signed-in-user show --output none 2>$null
+    $graphOk = ($LASTEXITCODE -eq 0)
+}
+if (-not $graphOk) {
+    Write-Info "Microsoft Graph token rejected by CAE. Clearing token cache and re-logging in..."
+    az account clear --output none 2>$null
     az login --scope https://graph.microsoft.com/.default --output none
     if ($LASTEXITCODE -ne 0) { throw "az login (Graph scope) failed" }
 }
