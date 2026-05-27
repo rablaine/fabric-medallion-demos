@@ -1,14 +1,14 @@
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-jinja2==3.1.4
-python-multipart==0.0.12
-pydantic==2.9.2
-pyyaml==6.0.2
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+pydantic
+pyyaml
 
 # Azure SDK (for optional OAuth deployment flow)
-azure-identity==1.19.0
-azure-mgmt-resource==23.2.0
-msal==1.31.0
+azure-identity
+azure-mgmt-resource
+msal
 
 # Data generation
-faker==30.3.0
+faker

@@ -166,3 +166,106 @@ footer {
     font-weight: normal;
     font-size: 0.8rem;
 }
+
+.walkthrough-modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem 1.75rem;
+    color: var(--text);
+    max-width: 720px;
+    width: 90%;
+}
+.walkthrough-modal::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+}
+.walkthrough-modal[open] {
+    animation: walkthrough-fade-in 150ms ease-out;
+}
+.walkthrough-modal[open]::backdrop {
+    animation: walkthrough-backdrop-in 150ms ease-out;
+}
+.walkthrough-modal.closing {
+    animation: walkthrough-fade-out 150ms ease-in forwards;
+}
+.walkthrough-modal.closing::backdrop {
+    animation: walkthrough-backdrop-out 150ms ease-in forwards;
+}
+@keyframes walkthrough-fade-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes walkthrough-fade-out {
+    from { opacity: 1; transform: translateY(0); }
+    to   { opacity: 0; transform: translateY(-4px); }
+}
+@keyframes walkthrough-backdrop-in {
+    from { background: rgba(0, 0, 0, 0); }
+    to   { background: rgba(0, 0, 0, 0.6); }
+}
+@keyframes walkthrough-backdrop-out {
+    from { background: rgba(0, 0, 0, 0.6); }
+    to   { background: rgba(0, 0, 0, 0); }
+}
+.walkthrough-modal h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1.15rem;
+}
+.walkthrough-modal p,
+.walkthrough-modal ol { margin: 0.75rem 0; }
+.walkthrough-modal code {
+    background: rgba(255,255,255,0.07);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+.walkthrough-modal a {
+    color: var(--accent);
+    text-decoration: none;
+}
+.walkthrough-modal a:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}
+.walkthrough-close {
+    float: right;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    margin-left: 0.5rem;
+}
+.walkthrough-close:hover { color: var(--text); }
+
+.deploy-steps {
+    padding-left: 1.5rem;
+    line-height: 1.6;
+}
+.deploy-steps li { margin: 0.35rem 0; }
+
+.form-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+}
+.form-actions .cta-button { margin-top: 0; }
+.help-button {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+}
+.help-button:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}

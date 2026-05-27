@@ -1,8 +1,7 @@
 """Loads available verticals from the /verticals directory.
 
 Each vertical has a `vertical.yaml` manifest describing its metadata,
-required Azure resources, scale options, and what's included in the
-deployment package.
+required Azure resources, and what's included in the deployment package.
 """
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,7 +18,6 @@ class Vertical:
     status: str  # "available", "in-progress", "planned"
     azure_services: list[str] = field(default_factory=list)
     executive_kpis: list[str] = field(default_factory=list)
-    scale_options: list[str] = field(default_factory=lambda: ["small", "medium", "large"])
     root_path: Optional[Path] = None
 
 
@@ -46,7 +44,6 @@ class VerticalRegistry:
                 status=data.get("status", "planned"),
                 azure_services=data.get("azure_services", []),
                 executive_kpis=data.get("executive_kpis", []),
-                scale_options=data.get("scale_options", ["small", "medium", "large"]),
                 root_path=child,
             )
             self._verticals[vertical.id] = vertical

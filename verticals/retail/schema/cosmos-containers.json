@@ -1,0 +1,50 @@
+{
+  "containers": [
+    {
+      "name": "cart_sessions",
+      "partition_key": "/customer_id",
+      "default_ttl_seconds": 604800,
+      "description": "In-progress shopping carts. Auto-expire after 7 days of inactivity.",
+      "sample_document": {
+        "id": "cart_abc123",
+        "customer_id": 12345,
+        "items": [
+          {
+            "product_id": 567,
+            "sku": "LAPTOP-PRO-15-SLV",
+            "name": "Contoso Pro Laptop 15\"",
+            "quantity": 1,
+            "unit_price": 1299.99,
+            "added_at": "2026-05-26T14:23:00Z"
+          }
+        ],
+        "subtotal": 1299.99,
+        "promo_code_applied": null,
+        "created_at": "2026-05-26T14:20:00Z",
+        "updated_at": "2026-05-26T14:23:00Z"
+      }
+    },
+    {
+      "name": "wishlists",
+      "partition_key": "/customer_id",
+      "description": "Customer wishlists. Multiple named lists per customer.",
+      "sample_document": {
+        "id": "wishlist_xyz789",
+        "customer_id": 12345,
+        "list_name": "Birthday Ideas",
+        "is_public": false,
+        "items": [
+          {
+            "product_id": 890,
+            "sku": "PHONE-X-256-BLU",
+            "name": "Contoso Phone X 256GB",
+            "added_at": "2026-04-15T09:00:00Z",
+            "notes": "Want the blue one"
+          }
+        ],
+        "created_at": "2026-04-15T09:00:00Z",
+        "updated_at": "2026-05-20T11:00:00Z"
+      }
+    }
+  ]
+}

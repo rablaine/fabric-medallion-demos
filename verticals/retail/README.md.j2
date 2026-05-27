@@ -1,6 +1,40 @@
 # Contoso Retail Deployment Package
 
-Generated for resource group **{{ config.resource_group }}** in **{{ config.location }}** at **{{ config.scale }}** scale.
+Generated for resource group **{{ config.resource_group }}** in **{{ config.location }}**.
+
+## What this does for you
+
+In one script, you get a complete, working **Contoso Retail** demo environment
+on your Azure subscription:
+
+1. You picked the vertical, resource group, region, and resource prefix in the
+   Contoso Data Estate Builder web app — that's all baked into this zip.
+2. You'll run `deploy.cmd`. It prompts for your Azure account and subscription
+   (`az login`), then deploys everything below in order:
+
+   | Step | What gets created | Why |
+   |------|-------------------|-----|
+   | 1 | **Resource group** `{{ config.resource_group }}` in `{{ config.location }}` | Container for everything |
+   | 2 | **Azure SQL** serverless DB + retail schema | The source-of-truth OLTP system |
+   | 3 | **ADLS Gen2** with `raw` + `curated` containers | The data lake |
+   | 4 | **Fabric F2 capacity** (admin = you) | Runs all the Fabric workloads |
+   | 5 | **Bronze workspace** + lakehouse | First stop of the medallion |
+   | 6 | **Seed notebook** uploaded + executed | Populates SQL (5k customers, 1.5k products, 50k orders over the last fiscal quarter) AND drops 90 days of daily supplier Parquet + marketing CSV files into ADLS `raw/` |
+   | 7 | **SQL Mirror** of the Azure SQL DB into the bronze lakehouse | Real-time Delta-format mirror of every SQL table — *no pipeline needed* |
+   | 8 | **OneLake shortcut** from `Files/raw` → ADLS `raw` container | The lakehouse can read your lake files directly |
+
+3. **Checkpoint 1**: at this point you have a complete, populated bronze layer.
+   Open `https://app.fabric.microsoft.com`, find the **`contoso-retail-1-bronze`**
+   workspace, and you'll see all the SQL tables as Delta tables (via Mirror) and
+   the raw files (via Shortcut).
+4. **Coming next** (run when ready): the **medallion build-out** — silver +
+   gold workspaces, bronze→silver and silver→gold notebooks, an initial-load
+   pipeline, an incremental-load pipeline, and a "tick" notebook that simulates
+   new daily activity. You'll run the initial load once, then trigger
+   incremental loads on demand to watch the lakehouse grow.
+
+> When you're done playing, **pause the Fabric capacity** in the Azure portal
+> (or delete the whole RG) to stop the bill.
 
 ## Prerequisites
 
@@ -12,9 +46,22 @@ Generated for resource group **{{ config.resource_group }}** in **{{ config.loca
 ## Deploy
 
 ### Windows / PowerShell
+
+Downloaded files are blocked by Windows ("Mark of the Web"). Unblock first, then run **`deploy.cmd`** (it launches pwsh 7 with the correct stdin handling — `pwsh -File` is broken for interactive scripts):
+
 ```powershell
+Get-ChildItem -Recurse | Unblock-File
+.\deploy.cmd
+```
+
+Or, if you're already in a `pwsh` 7 window opened from the Start menu / Windows Terminal:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
 .\deploy.ps1
 ```
+
+**Do not** use `pwsh -ExecutionPolicy Bypass -File .\deploy.ps1` from `powershell.exe` 5.1 — Read-Host hangs.
 
 ### macOS / Linux / WSL
 ```bash
@@ -42,7 +89,6 @@ This package was generated with the following settings (see `deployment.config`)
 
 - **Resource Group**: `{{ config.resource_group }}`
 - **Location**: `{{ config.location }}`
-- **Scale**: `{{ config.scale }}`
 - **Resource Prefix**: `{{ config.resource_prefix }}`
 
 To change these, regenerate the package from the Contoso Data Estate Builder web app.

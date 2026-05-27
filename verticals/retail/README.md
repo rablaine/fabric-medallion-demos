@@ -24,10 +24,7 @@ Core entities:
 
 ## Synthetic Data
 
-See [data-gen/README.md](data-gen/README.md). Scale options:
-- **small**: ~1k customers, ~500 products, ~10k orders
-- **medium**: ~50k customers, ~5k products, ~500k orders
-- **large**: ~1M customers, ~20k products, ~10M orders
+Generated on demand by a Fabric notebook (Phase B) — no seed file ships in the deployment zip. The repo's `data-gen/` folder is a dev tool used to author and test the Faker templates that the notebook will reuse.
 
 ## Analytics
 

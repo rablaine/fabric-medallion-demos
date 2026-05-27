@@ -18,24 +18,24 @@
         <label>
             Azure Region
             <select name="location">
-                <option value="eastus" selected>East US</option>
+                <option value="centralus" selected>Central US</option>
+                <option value="eastus">East US</option>
                 <option value="eastus2">East US 2</option>
                 <option value="westus2">West US 2</option>
                 <option value="westus3">West US 3</option>
-                <option value="centralus">Central US</option>
+                <option value="southcentralus">South Central US</option>
+                <option value="northcentralus">North Central US</option>
                 <option value="northeurope">North Europe</option>
                 <option value="westeurope">West Europe</option>
+                <option value="swedencentral">Sweden Central</option>
+                <option value="uksouth">UK South</option>
+                <option value="australiaeast">Australia East</option>
+                <option value="southeastasia">Southeast Asia</option>
             </select>
-        </label>
-
-        <label>
-            Scale
-            <select name="scale">
-                {% for opt in vertical.scale_options %}
-                <option value="{{ opt }}"{% if opt == "small" %} selected{% endif %}>{{ opt|capitalize }}</option>
-                {% endfor %}
-            </select>
-            <small>Controls data volume and resource SKUs.</small>
+            <small>Limited to regions that support every feature this demo
+            deploys: Microsoft Fabric F8 capacity, Azure Functions Flex
+            Consumption (FC1), Azure SQL serverless Gen5, Event Hubs Standard,
+            and ADLS Gen2.</small>
         </label>
 
         <label>
@@ -44,7 +44,66 @@
             <small>Lowercase letters and numbers only. Max 12 chars.</small>
         </label>
 
-        <button type="submit" class="cta-button">Download Deployment Package</button>
+        <div class="form-actions">
+            <button type="submit" class="cta-button">Download Deployment Package</button>
+            <button type="button" class="help-button" aria-label="What you'll get"
+                    onclick="openWalkthrough()">?</button>
+        </div>
     </form>
+
+    <dialog id="walkthrough-modal" class="walkthrough-modal">
+        <button type="button" class="walkthrough-close" aria-label="Close" onclick="closeWalkthrough()">&times;</button>
+        <h2>What you'll get &amp; what happens when you run it</h2>
+        <p>
+            You fill in the form, click <em>Download Deployment Package</em>, and
+            get a zip with your settings baked in. Inside the zip is <code>deploy.cmd</code>.
+            Running it prompts for your Azure account + subscription, then deploys
+            everything in order:
+        </p>
+        <ol class="deploy-steps">
+            <li><strong>Resource group</strong> in your chosen region</li>
+            <li><strong>Azure SQL</strong> (serverless) + the retail schema</li>
+            <li><strong>ADLS Gen2</strong> with <code>raw</code> + <code>curated</code> containers</li>
+            <li><strong>Fabric F2 capacity</strong> (you as admin)</li>
+            <li><strong>Bronze workspace</strong> + lakehouse in Fabric</li>
+            <li><strong>Seed notebook</strong> uploaded and executed &mdash; populates SQL with a fiscal quarter of data (5k customers, 1.5k products, 50k orders) and drops 90 days of supplier Parquet + marketing CSV files into ADLS <code>raw/</code></li>
+            <li><strong>SQL Mirror</strong> of every retail table into the bronze lakehouse as Delta &mdash; real-time, no pipeline needed</li>
+            <li><strong>OneLake shortcut</strong> from <code>Files/raw</code> &rarr; your ADLS <code>raw/</code> container</li>
+        </ol>
+        <p>
+            <strong>Checkpoint:</strong> at this point you have a fully populated bronze
+            layer. Open <a href="https://app.fabric.microsoft.com" target="_blank" rel="noopener">Fabric</a>,
+            find your bronze workspace, and browse the mirrored tables + raw files.
+        </p>
+        <p>
+            <strong>Next phase (run when ready):</strong> medallion build-out &mdash;
+            silver + gold workspaces, bronze&rarr;silver and silver&rarr;gold
+            notebooks, an initial-load pipeline, an incremental-load pipeline, and a
+            "tick" notebook that simulates new daily activity. You run the initial
+            load once, then trigger incremental loads on demand.
+        </p>
+        <p>
+            <em>When you're done, pause the Fabric capacity (or delete the RG) to stop the bill.</em>
+        </p>
+    </dialog>
+
+    <script>
+        const walkthroughModal = document.getElementById('walkthrough-modal');
+        function openWalkthrough() { walkthroughModal.showModal(); }
+        function closeWalkthrough() {
+            walkthroughModal.classList.add('closing');
+            walkthroughModal.addEventListener('animationend', () => {
+                walkthroughModal.classList.remove('closing');
+                walkthroughModal.close();
+            }, { once: true });
+        }
+        walkthroughModal.addEventListener('click', (e) => {
+            if (e.target === walkthroughModal) closeWalkthrough();
+        });
+        walkthroughModal.addEventListener('cancel', (e) => {
+            e.preventDefault();
+            closeWalkthrough();
+        });
+    </script>
 </section>
 {% endblock %}
