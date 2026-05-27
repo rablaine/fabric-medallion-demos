@@ -167,37 +167,79 @@ footer {
     font-size: 0.8rem;
 }
 
-.walkthrough {
+.walkthrough-modal {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 1rem 1.25rem;
-    margin: 1.5rem 0 0;
+    padding: 1.5rem 1.75rem;
+    color: var(--text);
     max-width: 720px;
+    width: 90%;
 }
-.walkthrough > summary {
-    cursor: pointer;
-    font-size: 1.05rem;
-    padding: 0.25rem 0;
+.walkthrough-modal::backdrop {
+    background: rgba(0, 0, 0, 0.6);
 }
-.walkthrough p,
-.walkthrough ol { margin: 0.75rem 0; }
-.walkthrough code {
+.walkthrough-modal h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1.15rem;
+}
+.walkthrough-modal p,
+.walkthrough-modal ol { margin: 0.75rem 0; }
+.walkthrough-modal code {
     background: rgba(255,255,255,0.07);
     padding: 0.1rem 0.35rem;
     border-radius: 4px;
     font-size: 0.9em;
 }
+.walkthrough-modal a {
+    color: var(--accent);
+    text-decoration: none;
+}
+.walkthrough-modal a:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}
+.walkthrough-close-form {
+    margin: 0;
+    float: right;
+}
+.walkthrough-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+}
+.walkthrough-close:hover { color: var(--text); }
+
 .deploy-steps {
     padding-left: 1.5rem;
     line-height: 1.6;
 }
 .deploy-steps li { margin: 0.35rem 0; }
-.walkthrough a {
-    color: var(--accent);
-    text-decoration: none;
+
+.form-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
 }
-.walkthrough a:hover {
-    color: var(--accent-hover);
-    text-decoration: underline;
+.form-actions .cta-button { margin-top: 0; }
+.help-button {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+}
+.help-button:hover {
+    color: var(--accent);
+    border-color: var(--accent);
 }

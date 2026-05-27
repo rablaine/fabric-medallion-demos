@@ -35,13 +35,20 @@
             <small>Lowercase letters and numbers only. Max 12 chars.</small>
         </label>
 
-        <button type="submit" class="cta-button">Download Deployment Package</button>
+        <div class="form-actions">
+            <button type="submit" class="cta-button">Download Deployment Package</button>
+            <button type="button" class="help-button" aria-label="What you'll get"
+                    onclick="document.getElementById('walkthrough-modal').showModal()">?</button>
+        </div>
     </form>
 
-    <details class="walkthrough" open>
-        <summary><strong>What you'll get &amp; what happens when you run it</strong></summary>
+    <dialog id="walkthrough-modal" class="walkthrough-modal">
+        <form method="dialog" class="walkthrough-close-form">
+            <button class="walkthrough-close" aria-label="Close">&times;</button>
+        </form>
+        <h2>What you'll get &amp; what happens when you run it</h2>
         <p>
-            You fill in the form above, click <em>Download Deployment Package</em>, and
+            You fill in the form, click <em>Download Deployment Package</em>, and
             get a zip with your settings baked in. Inside the zip is <code>deploy.cmd</code>.
             Running it prompts for your Azure account + subscription, then deploys
             everything in order:
@@ -71,6 +78,6 @@
         <p>
             <em>When you're done, pause the Fabric capacity (or delete the RG) to stop the bill.</em>
         </p>
-    </details>
+    </dialog>
 </section>
 {% endblock %}
