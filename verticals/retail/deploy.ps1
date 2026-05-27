@@ -480,8 +480,13 @@ az functionapp deployment source config-zip `
     --resource-group $config.RESOURCE_GROUP `
     --name $outputs.functionAppName.value `
     --src $funcZip `
-    --build-remote true `
     --output none
+# NB: do NOT pass --build-remote here. On Linux Consumption Python, that flag
+# actively strips ENABLE_ORYX_BUILD from app settings, which kills the pip
+# install of requirements.txt and produces a broken zip the Kudu builder
+# rejects (status=3, no log). The Bicep already sets
+# SCM_DO_BUILD_DURING_DEPLOYMENT=true + ENABLE_ORYX_BUILD=true, which is what
+# triggers Oryx server-side. Leave az CLI alone and let those drive it.
 if ($LASTEXITCODE -ne 0) {
     Remove-Item $funcZip -ErrorAction SilentlyContinue
     throw "Function zip-deploy failed"
