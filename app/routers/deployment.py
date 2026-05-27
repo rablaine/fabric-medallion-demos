@@ -13,7 +13,6 @@ async def generate_package(
     vertical_id: str,
     resource_group: str = Form(...),
     location: str = Form("centralus"),
-    scale: str = Form("small"),
     resource_prefix: str = Form("contoso"),
 ):
     """Generate a downloadable deployment package for the selected vertical."""
@@ -27,7 +26,6 @@ async def generate_package(
         config={
             "resource_group": resource_group,
             "location": location,
-            "scale": scale,
             "resource_prefix": resource_prefix,
         }
     )

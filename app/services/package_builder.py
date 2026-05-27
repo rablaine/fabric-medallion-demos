@@ -1,7 +1,7 @@
 """Builds downloadable deployment packages for a vertical.
 
 Takes the vertical's templates (Bicep, data generation scripts, docs)
-and user-provided configuration (resource group, region, scale) and
+and user-provided configuration (resource group, region) and
 produces a zip file the user can download and run locally.
 """
 import shutil
@@ -27,9 +27,14 @@ class PackageBuilder:
         staging = out_dir / f"contoso-{self.vertical.id}"
         staging.mkdir()
 
-        # Copy vertical assets (everything except the manifest)
+        # Items in the vertical folder that should not ship to end users.
+        # `data-gen` is a dev tool for regenerating Faker data — Phase B replaces
+        # it with a Fabric notebook that runs in the customer's tenant.
+        EXCLUDED = {"vertical.yaml", "data-gen"}
+
+        # Copy vertical assets
         for item in self.root.iterdir():
-            if item.name == "vertical.yaml":
+            if item.name in EXCLUDED:
                 continue
             dest = staging / item.name
             if item.is_dir():
@@ -57,7 +62,6 @@ class PackageBuilder:
             f"VERTICAL={self.vertical.id}",
             f"RESOURCE_GROUP={config['resource_group']}",
             f"LOCATION={config['location']}",
-            f"SCALE={config['scale']}",
             f"RESOURCE_PREFIX={config['resource_prefix']}",
         ]
         (staging / "deployment.config").write_text("\n".join(lines) + "\n", encoding="utf-8")

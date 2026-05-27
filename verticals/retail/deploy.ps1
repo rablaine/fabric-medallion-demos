@@ -154,7 +154,6 @@ $deployJson = az deployment group create `
     --parameters `
         resourcePrefix=$($config.RESOURCE_PREFIX) `
         location=$($config.LOCATION) `
-        scale=$($config.SCALE) `
         sqlAdminObjectId=$sqlAdminObjectId `
         sqlAdminLoginName=$sqlAdminLoginName `
         clientIpAddress=$clientIp `
@@ -196,28 +195,6 @@ Invoke-Sqlcmd `
 Write-Ok "Schema applied successfully"
 
 # -----------------------------------------------------------------------------
-# Seed data
-# -----------------------------------------------------------------------------
-$seedPath = Join-Path $PSScriptRoot 'data' "seed-$($config.SCALE).sql"
-if (Test-Path $seedPath) {
-    Write-Step "Loading seed data (seed-$($config.SCALE).sql)"
-    # Refresh AAD token in case the schema apply took a while
-    $tokenJson   = az account get-access-token --resource 'https://database.windows.net/' --output json | ConvertFrom-Json
-    $accessToken = $tokenJson.accessToken
-    Invoke-Sqlcmd `
-        -ServerInstance $outputs.sqlServerFqdn.value `
-        -Database $outputs.sqlDatabaseName.value `
-        -AccessToken $accessToken `
-        -InputFile $seedPath `
-        -QueryTimeout 600 `
-        -ErrorAction Stop
-    Write-Ok "Seed data loaded"
-} else {
-    Write-Warn2 "No seed file found at $seedPath - skipping seed load."
-    Write-Info  "To generate seed data: see data-gen/README.md"
-}
-
-# -----------------------------------------------------------------------------
 # Done
 # -----------------------------------------------------------------------------
 Write-Host ""
@@ -237,5 +214,10 @@ Write-Host "  Containers: $($outputs.rawContainer.value), $($outputs.curatedCont
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Gray
 Write-Host "  - Connect via Azure Data Studio / SSMS using Microsoft Entra auth" -ForegroundColor Gray
-Write-Host "  - Customize or generate larger datasets: see data-gen/README.md" -ForegroundColor Gray
+Write-Host "  - Schema is applied; tables are empty. The historical seed notebook" -ForegroundColor Gray
+Write-Host "    (Phase B: Fabric) will populate a fiscal quarter of activity." -ForegroundColor Gray
 Write-Host ""
+
+# Pause so the user sees the success message before the window closes.
+# (Most users launch via deploy.cmd which double-clicks shut on exit otherwise.)
+Read-Host "Press Enter to exit"

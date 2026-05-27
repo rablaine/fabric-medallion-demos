@@ -1,19 +1,21 @@
 """
 Contoso Tech - Retail Synthetic Data Generator
 ===============================================
-Generates realistic consumer-electronics retail data and either:
+Generates a fiscal quarter (~90 days) of realistic consumer-electronics
+retail data and either:
   - Writes INSERT statements to a .sql file (default, no DB required)
   - Loads directly into Azure SQL via AAD token (--load flag)
 
-Usage:
-    python generate.py --scale small --output ../data/seed-small.sql
-    python generate.py --scale medium --output ../data/seed-medium.sql
-    python generate.py --scale small --load --server contoso3-retail-sql-xxx.database.windows.net --database contoso_retail
+Dev tool only. End users get the pre-baked `data/seed.sql` shipped in
+the deployment zip, or (Phase B) a Fabric notebook that generates the
+same dataset directly in the lakehouse.
 
-Scale row counts:
-    small  : 1 000 customers | 500 products | 10 000 orders
-    medium : 50 000 customers | 5 000 products | 500 000 orders
-    large  : 1 000 000 customers | 20 000 products | 10 000 000 orders
+Usage:
+    python generate.py --output ../data/seed.sql
+    python generate.py --load --server contoso-retail-sql-xxx.database.windows.net --database contoso_retail
+
+Row counts (fixed):
+    5 000 customers | 1 500 products | 50 000 orders
 """
 
 import argparse
@@ -44,13 +46,9 @@ Faker.seed(42)
 random.seed(42)
 
 # ---------------------------------------------------------------------------
-# Scale definitions
+# Dataset volume (one fiscal quarter of activity)
 # ---------------------------------------------------------------------------
-SCALES = {
-    "small":  dict(customers=1_000,    products=500,    orders=10_000),
-    "medium": dict(customers=50_000,   products=5_000,  orders=500_000),
-    "large":  dict(customers=1_000_000, products=20_000, orders=10_000_000),
-}
+QUARTER = dict(customers=5_000, products=1_500, orders=50_000)
 
 # ---------------------------------------------------------------------------
 # Contoso Tech product catalog (consumer electronics)
@@ -199,15 +197,15 @@ def write_inserts(out, table: str, columns: list, rows: list, batch: int = 500):
 # Generator
 # ---------------------------------------------------------------------------
 
-def generate(scale: str) -> str:
-    counts = SCALES[scale]
+def generate() -> str:
+    counts = QUARTER
     n_customers = counts["customers"]
     n_products  = counts["products"]
     n_orders    = counts["orders"]
 
     out = StringIO()
     out.write("-- ============================================================\n")
-    out.write(f"-- Contoso Tech - Retail Seed Data ({scale} scale)\n")
+    out.write("-- Contoso Tech - Retail Seed Data (fiscal quarter)\n")
     out.write(f"-- Generated {datetime.date.today().isoformat()}\n")
     out.write("-- ============================================================\n\n")
     out.write("SET NOCOUNT ON;\n\n")
@@ -636,14 +634,12 @@ def load_to_sql(sql: str, server: str, database: str):
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Contoso Tech retail data generator")
-    parser.add_argument("--scale", choices=["small", "medium", "large"], default="small",
-                        help="Data volume (default: small)")
     parser.add_argument("--output", type=str,
-                        help="Write SQL to this file (default: ../data/seed-{scale}.sql)")
+                        help="Write SQL to this file (default: ../data/seed.sql)")
     parser.add_argument("--load", action="store_true",
                         help="Load directly into Azure SQL (requires --server and --database)")
     parser.add_argument("--server", type=str,
-                        help="Azure SQL server FQDN (e.g. contoso3-retail-sql-xxx.database.windows.net)")
+                        help="Azure SQL server FQDN (e.g. contoso-retail-sql-xxx.database.windows.net)")
     parser.add_argument("--database", type=str, default="contoso_retail",
                         help="Database name (default: contoso_retail)")
     args = parser.parse_args()
@@ -652,11 +648,11 @@ def main():
         parser.error("--load requires --server")
 
     out_path = args.output or str(
-        Path(__file__).parent.parent / "data" / f"seed-{args.scale}.sql"
+        Path(__file__).parent.parent / "data" / "seed.sql"
     )
 
-    print(f"Generating {args.scale} dataset...")
-    sql = generate(args.scale)
+    print("Generating fiscal-quarter dataset...")
+    sql = generate()
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     Path(out_path).write_text(sql, encoding="utf-8")

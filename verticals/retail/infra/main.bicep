@@ -17,10 +17,6 @@ param resourcePrefix string = 'contoso'
 @description('Azure region')
 param location string = resourceGroup().location
 
-@description('Deployment scale: drives SKUs')
-@allowed(['small', 'medium', 'large'])
-param scale string = 'small'
-
 @description('Object ID of the AAD principal to grant SQL admin (your user)')
 param sqlAdminObjectId string
 
@@ -38,30 +34,16 @@ param tags object = {
 }
 
 // -----------------------------------------------------------------------------
-// SKU mapping
+// Fixed SKUs
 // -----------------------------------------------------------------------------
-// Azure SQL: Serverless General Purpose (Gen5). Auto-pauses after 60 min idle
-// so the DB costs only ~$0.12/GB/mo of storage when no one is using it.
-// When woken (any connection), it scales between minCapacity and the SKU capacity.
-// Cold-start from paused: ~30-60s on the first query.
-var sqlSkuMap = {
-  small:  { name: 'GP_S_Gen5_2', tier: 'GeneralPurpose', family: 'Gen5', capacity: 2 }
-  medium: { name: 'GP_S_Gen5_4', tier: 'GeneralPurpose', family: 'Gen5', capacity: 4 }
-  large:  { name: 'GP_S_Gen5_8', tier: 'GeneralPurpose', family: 'Gen5', capacity: 8 }
-}
-
-// Per-scale database storage cap (GB).
-var sqlDbConfigMap = {
-  small:  { maxSizeGb: 32  }
-  medium: { maxSizeGb: 128 }
-  large:  { maxSizeGb: 512 }
-}
-
-var storageSkuMap = {
-  small:  'Standard_LRS'
-  medium: 'Standard_LRS'
-  large:  'Standard_ZRS'
-}
+// Azure SQL: Serverless General Purpose Gen5, 4 vCore. Auto-pauses after
+// 60 min idle so the DB costs only ~$0.12/GB/mo of storage when nobody is
+// using it. Cold-start from paused: ~30-60s on the first query.
+// 4 vCore gives headroom to load a fiscal quarter of seed data in minutes
+// and run the bronze/silver/gold notebooks against it without throttling.
+var sqlSku       = { name: 'GP_S_Gen5_4', tier: 'GeneralPurpose', family: 'Gen5', capacity: 4 }
+var sqlMaxSizeGb = 128
+var storageSku   = 'Standard_LRS'
 
 // Resource names (Azure has uniqueness rules per resource type)
 var suffix     = uniqueString(resourceGroup().id)
@@ -77,7 +59,7 @@ module storage 'modules/storage.bicep' = {
   params: {
     name: storageAcc
     location: location
-    sku: storageSkuMap[scale]
+    sku: storageSku
     tags: tags
   }
 }
@@ -91,8 +73,8 @@ module sql 'modules/sql.bicep' = {
     serverName: sqlServer
     databaseName: sqlDb
     location: location
-    sku: sqlSkuMap[scale]
-    maxSizeGb: sqlDbConfigMap[scale].maxSizeGb
+    sku: sqlSku
+    maxSizeGb: sqlMaxSizeGb
     sqlAdminObjectId: sqlAdminObjectId
     sqlAdminLoginName: sqlAdminLoginName
     clientIpAddress: clientIpAddress

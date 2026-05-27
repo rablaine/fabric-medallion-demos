@@ -12,18 +12,16 @@
 |---|---|
 | `resourcePrefix` | Lowercase alphanumeric naming prefix (max 12 chars) |
 | `location` | Azure region |
-| `scale` | `small` / `medium` / `large` - drives SKUs |
 | `sqlAdminObjectId` | AAD Object ID granted SQL admin (set by deploy.ps1 to caller) |
 | `sqlAdminLoginName` | UPN of the SQL admin |
 | `clientIpAddress` | Public IP added to SQL firewall (auto-detected by deploy.ps1) |
 
-## SKU Scaling
+## Fixed SKUs
 
-| Scale | SQL DB | Storage |
+| Resource | SKU | Notes |
 |---|---|---|
-| small | Basic (5 DTU) | Standard_LRS |
-| medium | S0 (10 DTU) | Standard_LRS |
-| large | S2 (50 DTU) | Standard_ZRS |
+| SQL Database | GP_S_Gen5_4 (Serverless, 4 vCore) | Auto-pauses after 60 min idle; 128 GB max |
+| Storage | Standard_LRS | ADLS Gen2 with raw + curated containers |
 
 ## Phase 1 Scope
 

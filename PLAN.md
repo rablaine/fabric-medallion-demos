@@ -55,16 +55,18 @@ Each vertical should include:
 - Data classification metadata
 
 ### 2. Synthetic Data Generator
-- Python scripts to generate realistic data
+- Faker-based PySpark notebooks that run inside Fabric at deploy time
 - Industry-appropriate distributions and patterns
-- Configurable scale (small/medium/large)
+- Fixed fiscal-quarter volume per vertical (no scale options)
+- Writes to BOTH Azure SQL (transactional) and ADLS Gen2 raw (CSV + Parquet daily files)
+- Repo's `data-gen/` is a dev-only tool for authoring/testing the templates that the notebook reuses
 - Referential integrity maintained
 
 ### 3. Azure Infrastructure (IaC)
-- Bicep templates for all resources
-- Resource naming conventions
+- Bicep templates for all resources (RG, SQL, ADLS, Fabric capacity)
+- Resource naming conventions via `uniqueString(resourceGroup().id)`
 - RBAC and security configurations
-- Cost-optimized defaults with scale options
+- Cost-optimized defaults (Serverless SQL with auto-pause, F2 Fabric capacity)
 
 ### 4. Data Pipelines
 - Ingestion patterns (batch, streaming, APIs)
@@ -97,7 +99,7 @@ Each vertical should include:
 **User Experience:**
 1. User opens web app
 2. Selects vertical (Healthcare, Finance, Retail, Manufacturing & Operations, Education)
-3. Configures deployment options (scale, region, resource naming)
+3. Configures deployment options (region, resource naming)
 4. Chooses deployment method:
    - **Automated**: Authenticate to Azure tenant → app deploys everything using their credentials
    - **Manual**: Download deployment package (Bicep templates + scripts + instructions)
@@ -106,13 +108,14 @@ Each vertical should include:
 - Web app orchestrates deployment workflow
 - GitHub repository hosts all templates, scripts, and assets
 - CI/CD pattern: app pulls latest templates from repo
-- Deployment engine executes:
-  1. Create resource group
-  2. Deploy Azure infrastructure (Bicep)
-  3. Populate databases with synthetic data
-  4. Configure analytics platform (Fabric/Synapse)
-  5. Import dashboards, notebooks, Purview glossaries
-  6. Return deployment summary with access URLs
+- Deployment engine executes (all inside the user's local `deploy.ps1`):
+  1. Bicep: resource group resources (SQL, ADLS, Fabric F2 capacity)
+  2. Apply SQL schema
+  3. Fabric REST: create 3 workspaces (bronze/silver/gold), assign capacity, create lakehouses
+  4. Fabric REST: upload notebooks + create pipelines (initial-load, incremental-load, tick)
+  5. Fabric REST: run the seed notebook, poll until complete (populates SQL + ADLS)
+  6. Print success banner with all resource info; pause for user to read before exit
+- After the script exits, the user manually triggers the initial-load pipeline in Fabric to flow data through bronze → silver → gold. Each pipeline run ends with a tick step that adds fresh activity to the sources so the next incremental load has new data.
 
 **Repository Structure:**
 ```
@@ -229,9 +232,11 @@ README.md
 
 ### Medallion + Source Mix ✅
 - **Detailed design**: see [docs/medallion-architecture.md](docs/medallion-architecture.md)
-- **Per vertical**: 5 sources, 4 distinct Fabric ingest patterns (Mirror, Shortcut, Eventstream, Pipeline/Notebook)
-- **Iterative loads**: `tick.py` injects new OLTP rows + dated file drops + watermark-based REST pulls so demos can show CDC / incremental / streaming on otherwise-static seed data
-- **Fabric capacity**: leaning bring-your-own-workspace; final decision before build
+- **End-to-end deploy contract**: see `/memories/repo/architecture.md` (the locked-in deploy.ps1 flow)
+- **Per vertical**: 5 sources (SQL OLTP, ADLS supplier Parquet, ADLS marketing CSV, Event Hub clickstream, Open-Meteo weather REST)
+- **3 workspaces per vertical**: `contoso-{vertical}-1-bronze | -2-silver | -3-gold`, all bound to one auto-provisioned F2 Fabric capacity
+- **Iterative tick**: every load pipeline ends with `00_DEMO_simulate_activity` (Faker) writing fresh rows to SQL + dated files to ADLS, so the next incremental run has new data
+- **No local scripts**: all generation and processing happens in Fabric notebooks running in the customer tenant
 
 ### Security & Permissions ✅
 - **Required Azure Permissions**: Contributor on subscription or resource group (user must have this already)
@@ -270,11 +275,6 @@ README.md
 
 - [ ] Include sample apps (web/mobile UI) consuming the data, or just data layer + analytics?
 - [ ] Multi-region deployment scenarios? (Probably defer to v2)
-- [ ] Real-time cost estimation before deployment?
-- [ ] Integration with Azure Cost Management for deployed resources?
-- [ ] Support for "tear down" / cleanup functionality in app?
-- [ ] Allow customization of schema/data before deployment?
-- [ ] Which vertical to build first? (Healthcare = clearer schema, Retail = more fun data) v2)
 - [ ] Real-time cost estimation before deployment?
 - [ ] Integration with Azure Cost Management for deployed resources?
 - [ ] Support for "tear down" / cleanup functionality in app?

@@ -30,16 +30,6 @@
         </label>
 
         <label>
-            Scale
-            <select name="scale">
-                {% for opt in vertical.scale_options %}
-                <option value="{{ opt }}"{% if opt == "small" %} selected{% endif %}>{{ opt|capitalize }}</option>
-                {% endfor %}
-            </select>
-            <small>Controls data volume and resource SKUs.</small>
-        </label>
-
-        <label>
             Resource Name Prefix
             <input type="text" name="resource_prefix" value="contoso" required pattern="[a-z0-9]+" maxlength="12">
             <small>Lowercase letters and numbers only. Max 12 chars.</small>
