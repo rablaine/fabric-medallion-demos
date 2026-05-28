@@ -2,12 +2,17 @@
 
 Timer-triggered Azure Function that fires every TIMER_SCHEDULE (default
 30 seconds) and pushes EVENTS_PER_FIRE (default 50) synthetic clickstream
-events into Event Hubs.
+events into a Fabric Eventstream CustomEndpoint source.
 
-Authenticates with the Function's system-assigned managed identity --
-no connection strings or keys are baked in. The MSI must have the
-"Azure Event Hubs Data Sender" role on the namespace; this is granted
-by the eventhub.bicep module at deploy time.
+The Fabric Eventstream CustomEndpoint exposes an Event Hub-compatible
+endpoint with a Fabric-managed SAS connection string. We authenticate with
+that conn string (read from EVENTHUB_CONNECTION_STRING) rather than MSI:
+tenant policy `EventHub_DisableLocalAuth_Modify` forbids SAS auth on Azure
+Event Hubs, but the Fabric-managed endpoint is exempt because it isn't an
+Azure EH namespace -- it's a Fabric Real-Time Hub managed pipe.
+
+The conn string is populated at deploy time by deploy.ps1 after the
+Eventstream is created (see Get-FabricEventstreamSourceConnectionString).
 """
 from __future__ import annotations
 
@@ -20,15 +25,13 @@ import uuid
 
 import azure.functions as func
 from azure.eventhub import EventData, EventHubProducerClient
-from azure.identity import DefaultAzureCredential
 
 # -----------------------------------------------------------------------------
-# Configuration (all wired via app settings in function.bicep)
+# Configuration (all wired via app settings -- conn string set by deploy.ps1)
 # -----------------------------------------------------------------------------
-NAMESPACE_FQDN = os.environ["EVENTHUB_NAMESPACE_FQDN"]
-HUB_NAME       = os.environ["EVENTHUB_NAME"]
-SCHEDULE       = os.environ.get("TIMER_SCHEDULE", "*/30 * * * * *")
-EVENTS_PER_FIRE = int(os.environ.get("EVENTS_PER_FIRE", "50"))
+CONNECTION_STRING = os.environ["EVENTHUB_CONNECTION_STRING"]
+SCHEDULE          = os.environ.get("TIMER_SCHEDULE", "*/30 * * * * *")
+EVENTS_PER_FIRE   = int(os.environ.get("EVENTS_PER_FIRE", "50"))
 
 # Demo dimensions -- small fixed sets keep downstream Eventstream/silver joins
 # tractable. Customer/product IDs intentionally overlap with the seed notebook's
@@ -41,15 +44,9 @@ DEVICE_TYPES = ["desktop", "mobile", "tablet"]
 DEVICE_WEIGHTS = [0.42, 0.50, 0.08]
 CHANNELS = ["organic", "google_ads", "meta_ads", "email", "direct", "referral"]
 
-# Reuse the credential + producer across invocations (Functions reuses the
-# Python process between firings). DefaultAzureCredential -> ManagedIdentityCredential
-# in the Function runtime.
-_credential = DefaultAzureCredential()
-_producer = EventHubProducerClient(
-    fully_qualified_namespace=NAMESPACE_FQDN,
-    eventhub_name=HUB_NAME,
-    credential=_credential,
-)
+# Reuse the producer across invocations (Functions reuses the Python process
+# between firings). Conn string carries the EntityPath, so no name needed.
+_producer = EventHubProducerClient.from_connection_string(CONNECTION_STRING)
 
 app = func.FunctionApp()
 
@@ -78,8 +75,6 @@ def clickstream_timer(timer: func.TimerRequest) -> None:
     batch = _producer.create_batch()
     for _ in range(EVENTS_PER_FIRE):
         evt = _make_event()
-        # PartitionKey by customer_id -> all events for a single customer land
-        # on the same partition (preserves per-customer ordering for sessions).
         ed = EventData(json.dumps(evt))
         ed.properties = {"event_type": evt["event_type"]}
         try:
@@ -93,5 +88,4 @@ def clickstream_timer(timer: func.TimerRequest) -> None:
     if len(batch) > 0:
         _producer.send_batch(batch)
 
-    logging.info("ClickstreamTimer: sent %d events to %s/%s",
-                 EVENTS_PER_FIRE, NAMESPACE_FQDN, HUB_NAME)
+    logging.info("ClickstreamTimer: sent %d events", EVENTS_PER_FIRE)

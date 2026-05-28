@@ -505,6 +505,104 @@ $shortcut = New-FabricAdlsShortcut `
 Write-Ok "  shortcut created at Files/raw"
 
 # -----------------------------------------------------------------------------
+# Real-time clickstream pipeline (Fabric Eventhouse + Eventstream)
+# -----------------------------------------------------------------------------
+# Tenant policy `EventHub_DisableLocalAuth_Modify` forbids SAS auth on any
+# Azure Event Hubs namespace, which makes a standalone Azure EH unusable
+# from a Function that also can't use the EH client's AAD path easily.
+# Instead we stand up the entire pipeline INSIDE Fabric:
+#
+#   Function --SAS--> Eventstream (CustomEndpoint source)
+#                       |
+#                       v (DirectIngestion, Fabric-provisioned Kusto data conn)
+#                     Eventhouse / KQL Database (Clickstream table)
+#
+# The CustomEndpoint exposes a Fabric-managed EH-compatible SAS endpoint
+# that is exempt from the Azure EH SAS policy (it isn't an Azure EH).
+#
+# CRITICAL: the destination table + ingestion mapping MUST be baked into the
+# KQL database definition (DatabaseSchema.kql) at CREATION time. If we create
+# the DB empty and add the table later via Kusto mgmt API, the table doesn't
+# get registered in Fabric's catalog, the auto-provisioning of the Kusto pull
+# data connection never fires, and the eventstream destination stays in
+# "Warning" forever with 0 rows ingested. See:
+# https://learn.microsoft.com/fabric/real-time-intelligence/event-streams/api-kusto-pull-destination
+Write-Step "Creating Eventhouse 'contoso_retail_events_eh' for real-time clickstream"
+$eventhouse = New-FabricEventhouse `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -Name 'contoso_retail_events_eh' `
+    -Description 'Contoso retail real-time event store'
+Write-Ok "  eventhouse id=$($eventhouse.id)"
+
+Write-Step "Creating KQL database 'contoso_retail_events' (with Clickstream table + mapping baked in)"
+$schemaKql = @'
+.create-merge table Clickstream (
+    event_id: string,
+    event_ts: datetime,
+    event_type: string,
+    customer_id: long,
+    product_id: long,
+    session_id: string,
+    device: string,
+    channel: string,
+    page_url: string
+)
+
+.create-or-alter table Clickstream ingestion json mapping 'clickstream_json_map'
+```
+[
+    {"column":"event_id","Properties":{"Path":"$.event_id"}},
+    {"column":"event_ts","Properties":{"Path":"$.event_ts"}},
+    {"column":"event_type","Properties":{"Path":"$.event_type"}},
+    {"column":"customer_id","Properties":{"Path":"$.customer_id"}},
+    {"column":"product_id","Properties":{"Path":"$.product_id"}},
+    {"column":"session_id","Properties":{"Path":"$.session_id"}},
+    {"column":"device","Properties":{"Path":"$.device"}},
+    {"column":"channel","Properties":{"Path":"$.channel"}},
+    {"column":"page_url","Properties":{"Path":"$.page_url"}}
+]
+```
+'@
+$kqldb = New-FabricKqlDatabaseWithSchema `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -Name 'contoso_retail_events' `
+    -EventhouseItemId $eventhouse.id `
+    -SchemaKql $schemaKql `
+    -Description 'Clickstream events landing zone'
+$kustoUri = $kqldb.properties.queryServiceUri
+if (-not $kustoUri) { throw "KQL DB queryServiceUri not returned" }
+Write-Ok "  kqldb id=$($kqldb.id) uri=$kustoUri"
+
+Write-Step "Granting workspace identity Ingestor+Viewer on KQL database"
+Grant-FabricKqlDatabaseWorkspaceIdentityAccess `
+    -QueryServiceUri $kustoUri `
+    -DatabaseName 'contoso_retail_events' `
+    -WorkspaceIdentityAppId $wsIdentity.applicationId `
+    -TenantId $selectedSub.tenantId
+Write-Ok "  workspace identity granted ingestor+viewer"
+
+Write-Step "Creating Eventstream 'clickstream_es' (CustomEndpoint -> Eventhouse DirectIngestion)"
+$es = New-FabricEventstreamWithEventhouseDest `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -Name 'clickstream_es' `
+    -EventhouseItemId $eventhouse.id `
+    -TableName 'Clickstream' `
+    -MappingRuleName 'clickstream_json_map' `
+    -Description 'Clickstream ingestion stream'
+Write-Ok "  eventstream id=$($es.eventstreamId) source=$($es.sourceName) dest=$($es.connectionName)"
+
+Write-Step "Fetching CustomEndpoint source SAS connection string"
+$eventstreamConnStr = Get-FabricEventstreamSourceConnectionString `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -EventstreamId $es.eventstreamId `
+    -SourceId $es.sourceId
+Write-Ok "  source conn string retrieved ($($eventstreamConnStr.Length) chars)"
+
+# -----------------------------------------------------------------------------
 # Function App deploy (clickstream emitter)
 # -----------------------------------------------------------------------------
 # Tenant policy forbids storage account keys, so we cannot use
@@ -571,7 +669,20 @@ if (-not $st.complete) { throw "Function deploy timed out after 10 min" }
 # OneDeploy status codes: 3=Failed, 4=Success
 if ($st.status -ne 4)  { throw "Function deploy failed (status=$($st.status), see $($st.log_url))" }
 Write-Ok "  function deployed -> https://$($outputs.functionHostname.value)"
-Write-Info "  emitter fires every 30s -> Event Hub '$($outputs.eventHubName.value)' on $($outputs.eventHubFqdn.value)"
+
+# Push the Fabric Eventstream CustomEndpoint SAS conn string into the
+# Function app settings AFTER code deploy, so the runtime restart picks it
+# up cleanly. Setting it before deploy works too but a second restart is
+# wasteful.
+Write-Step "Wiring EVENTHUB_CONNECTION_STRING into Function app settings"
+az functionapp config appsettings set `
+    --name $outputs.functionAppName.value `
+    --resource-group $config.RESOURCE_GROUP `
+    --settings "EVENTHUB_CONNECTION_STRING=$eventstreamConnStr" `
+    --output none
+if ($LASTEXITCODE -ne 0) { throw "Failed to set EVENTHUB_CONNECTION_STRING on $($outputs.functionAppName.value)" }
+Write-Ok "  EVENTHUB_CONNECTION_STRING set (Function will restart and begin emitting)"
+Write-Info "  emitter fires every 30s -> Fabric Eventstream '$($es.sourceName)' -> Eventhouse 'Clickstream' table"
 
 # -----------------------------------------------------------------------------
 # Done (checkpoint 1: bronze-only, ready for manual silver/gold build-out)
@@ -602,7 +713,9 @@ Write-Host "  Mirrored DB:      contoso_retail_sql_mirror (initial snapshot in p
 Write-Host "  Shortcut:         Files/raw -> $($outputs.storageAccount.value)/raw"
 Write-Host ""
 Write-Host "Streaming source:" -ForegroundColor Yellow
-Write-Host "  Event Hub:        $($outputs.eventHubName.value) on $($outputs.eventHubFqdn.value)"
+Write-Host "  Eventhouse:       contoso_retail_events_eh"
+Write-Host "  KQL DB / table:   contoso_retail_events / Clickstream"
+Write-Host "  Eventstream:      clickstream_es (CustomEndpoint -> Eventhouse DirectIngestion)"
 Write-Host "  Emitter:          $($outputs.functionAppName.value) (fires every 30s, ~50 events/fire)"
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Gray

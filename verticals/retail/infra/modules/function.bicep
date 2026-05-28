@@ -26,12 +26,6 @@ param planName string
 @description('Azure region')
 param location string
 
-@description('Event Hubs namespace FQDN -- passed to the function via app setting')
-param eventHubNamespaceFqdn string
-
-@description('Event Hub name (the hub to emit into)')
-param eventHubName string
-
 @description('Timer schedule (NCRONTAB). Default fires every 30 seconds.')
 param timerSchedule string = '*/30 * * * * *'
 
@@ -157,8 +151,8 @@ resource funcApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
 
         // Emitter wiring -- read by function_app.py
-        { name: 'EVENTHUB_NAMESPACE_FQDN', value: eventHubNamespaceFqdn }
-        { name: 'EVENTHUB_NAME',           value: eventHubName }
+        // EVENTHUB_CONNECTION_STRING is populated post-deploy by deploy.ps1
+        // once the Fabric Eventstream CustomEndpoint source exists.
         { name: 'TIMER_SCHEDULE',          value: timerSchedule }
         { name: 'EVENTS_PER_FIRE',         value: string(eventsPerFire) }
 

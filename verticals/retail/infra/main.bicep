@@ -53,8 +53,6 @@ var sqlServer      = toLower('${resourcePrefix}-retail-sql-${substring(suffix, 0
 var sqlDb          = 'contoso_retail'
 var storageAcc     = toLower('${resourcePrefix}rt${substring(suffix, 0, 8)}') // storage = 3-24 lowercase alphanumeric
 var fabricCapacity = toLower('${resourcePrefix}retail${substring(suffix, 0, 8)}') // capacity name = lowercase alnum, globally unique in Fabric tenant
-var eventHubNs     = toLower('${resourcePrefix}-retail-eh-${substring(suffix, 0, 6)}')   // EH ns = 6-50 alphanumeric+hyphens, globally unique in *.servicebus.windows.net
-var eventHubName   = 'clickstream'
 var funcAppName    = toLower('${resourcePrefix}-retail-emit-${substring(suffix, 0, 6)}') // *.azurewebsites.net global unique
 var funcStorageAcc = toLower('${resourcePrefix}rtfn${substring(suffix, 0, 8)}')          // dedicated storage for the Function runtime
 var funcPlanName   = toLower('${resourcePrefix}-retail-funcplan-${substring(suffix, 0, 6)}')
@@ -106,9 +104,10 @@ module fabric 'modules/fabric.bicep' = {
 }
 
 // -----------------------------------------------------------------------------
-// Function App (clickstream emitter, Linux Consumption Y1)
-// Deploy BEFORE Event Hub so its MSI principalId is available for the EH
-// Data Sender role assignment.
+// Function App (clickstream emitter, Linux Flex Consumption)
+// Pushes events into a Fabric Eventstream CustomEndpoint source. The
+// EVENTHUB_CONNECTION_STRING app setting is populated by deploy.ps1 after
+// the Eventstream is created (no Azure Event Hub namespace exists).
 // -----------------------------------------------------------------------------
 module funcApp 'modules/function.bicep' = {
   name: 'func-deploy'
@@ -118,28 +117,9 @@ module funcApp 'modules/function.bicep' = {
     appInsightsName: funcAiName
     planName: funcPlanName
     location: location
-    // Pass the EH FQDN by NAME (not output ref) so the modules have no
-    // dependency cycle and can deploy in parallel.
-    eventHubNamespaceFqdn: '${eventHubNs}.servicebus.windows.net'
-    eventHubName: eventHubName
     // Same principal that admins SQL also owns the Function -- gets Website
     // Contributor so deploy.ps1 can push code via Kudu /api/zipdeploy.
     deployerObjectId: sqlAdminObjectId
-    tags: tags
-  }
-}
-
-// -----------------------------------------------------------------------------
-// Event Hubs (clickstream source for Fabric Eventstream)
-// -----------------------------------------------------------------------------
-module eventhub 'modules/eventhub.bicep' = {
-  name: 'eventhub-deploy'
-  params: {
-    namespaceName: eventHubNs
-    location: location
-    hubName: eventHubName
-    senderPrincipalId: funcApp.outputs.principalId
-    ownerPrincipalId: sqlAdminObjectId
     tags: tags
   }
 }
@@ -157,8 +137,5 @@ output curatedContainer   string = storage.outputs.curatedContainerName
 output fabricCapacityId   string = fabric.outputs.capacityId
 output fabricCapacityName string = fabric.outputs.capacityName
 output uniqueSuffix       string = substring(suffix, 0, 8)
-output eventHubNamespace  string = eventhub.outputs.namespaceName
-output eventHubFqdn       string = eventhub.outputs.namespaceFqdn
-output eventHubName       string = eventhub.outputs.hubName
 output functionAppName    string = funcApp.outputs.appName
 output functionHostname   string = funcApp.outputs.defaultHostname
