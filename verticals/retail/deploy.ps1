@@ -328,15 +328,15 @@ $seedNb = New-FabricNotebookFromFile `
 Remove-Item $bakedNbPath -ErrorAction SilentlyContinue
 Write-Ok "  notebook id=$($seedNb.id)"
 
-# Upload the tick notebook too. It uses the same placeholder pattern as the
+# Upload the simulate-incremental notebook too. It uses the same placeholder pattern as the
 # seed (sql_server_fqdn / sql_database_name / subscription_id / resource_group
-# start as empty strings) so we can bake values in the same way. Tick is NOT
+# start as empty strings) so we can bake values in the same way. simulate-incremental is NOT
 # run as part of deploy -- it's meant to be triggered later (manually or by a
 # scheduled pipeline) to fill the gap between the seed and "now".
-Write-Step "Uploading tick notebook 10_tick_incremental_data"
-$tickNbPath = Join-Path $PSScriptRoot 'fabric' 'notebooks' '10_tick_incremental_data.ipynb'
-$tickNbSrc = Get-Content -Raw -Path $tickNbPath
-$tickNbSrc = $tickNbSrc.Replace(
+Write-Step "Uploading simulate-incremental notebook 10_simulate_incremental_activity"
+$simNbPath = Join-Path $PSScriptRoot 'fabric' 'notebooks' '10_simulate_incremental_activity.ipynb'
+$simNbSrc = Get-Content -Raw -Path $simNbPath
+$simNbSrc = $simNbSrc.Replace(
     'sql_server_fqdn   = \"\"',
     "sql_server_fqdn   = \`"$($outputs.sqlServerFqdn.value)\`""
 ).Replace(
@@ -349,15 +349,15 @@ $tickNbSrc = $tickNbSrc.Replace(
     'resource_group    = \"\"',
     "resource_group    = \`"$($config.RESOURCE_GROUP)\`""
 )
-$bakedTickPath = Join-Path ([System.IO.Path]::GetTempPath()) "10_tick_incremental_data.baked.$([guid]::NewGuid()).ipynb"
-Set-Content -Path $bakedTickPath -Value $tickNbSrc -NoNewline -Encoding utf8
-$tickNb = New-FabricNotebookFromFile `
+$bakedSimPath = Join-Path ([System.IO.Path]::GetTempPath()) "10_simulate_incremental_activity.baked.$([guid]::NewGuid()).ipynb"
+Set-Content -Path $bakedSimPath -Value $simNbSrc -NoNewline -Encoding utf8
+$simNb = New-FabricNotebookFromFile `
     -Token $fabricToken `
     -WorkspaceId $workspaces['1-bronze'].id `
-    -Name '10_tick_incremental_data' `
-    -NotebookPath $bakedTickPath
-Remove-Item $bakedTickPath -ErrorAction SilentlyContinue
-Write-Ok "  notebook id=$($tickNb.id)"
+    -Name '10_simulate_incremental_activity' `
+    -NotebookPath $bakedSimPath
+Remove-Item $bakedSimPath -ErrorAction SilentlyContinue
+Write-Ok "  notebook id=$($simNb.id)"
 
 # SQL DB is deployed at GP_S_Gen5_8 (min 1.0) so the seed has the throughput it
 # needs out of the gate -- no pre-seed scale-up call. We scale DOWN to Gen5_4

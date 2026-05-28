@@ -124,34 +124,34 @@ Fabric Data Pipeline: initial-load (run once after deploy)
   ├─ Notebook: 20_silver_conform            ← bronze → silver merges
   ├─ Notebook: 30_gold_marts                ← silver → star schema
   ├─ Activity: Refresh Power BI semantic model
-  └─ Execute Pipeline: tick (wait=false)    ← seed first round of incremental activity
+  └─ Execute Pipeline: simulate (wait=false)    ← seed first round of incremental activity
 
 Fabric Data Pipeline: incremental-load (run on demand)
   ├─ Notebook: 10_bronze_weather_pull       ← watermark REST pull
   ├─ Notebook: 20_silver_conform            ← merges new bronze rows
   ├─ Notebook: 30_gold_marts                ← updates star schema
   ├─ Activity: Refresh Power BI semantic model
-  └─ Execute Pipeline: tick (wait=false)    ← seed next round
+  └─ Execute Pipeline: simulate (wait=false)    ← seed next round
 
-Fabric Data Pipeline: tick (called only from above)
+Fabric Data Pipeline: simulate (called only from above)
   └─ Notebook: 00_DEMO_simulate_activity    ← injects fake activity
 ```
 
-Because `tick` is async on both pipelines, load times reflect real load
+Because `simulate` is async on both pipelines, load times reflect real load
 work — the simulation cost isn't on the user's clock. By the time they
 run the next pipeline, the source systems already have fresh data.
 
 ### Demo loop
 
 One button in Fabric → "Run incremental-load" → ~1-2 min later dashboards
-have moved. Re-run as many times as you want; numbers keep ticking forward.
+have moved. Re-run as many times as you want; numbers keep moving forward.
 
 ### Safety rail
 
 The simulate-activity notebook is labeled `00_DEMO_*` and has a banner
 warning at the top: "Remove from pipeline before connecting real source
 systems." Prevents anyone from forking this and accidentally injecting fake
-orders into production. The `tick` pipeline is similarly named and is the
+orders into production. The `simulate` pipeline is similarly named and is the
 only place that calls the DEMO notebook — single point to disable.
 
 ---
@@ -223,7 +223,7 @@ consolidation in its own industry idiom.
    - Enable workspace identities, assign RBAC on SQL/EH/ADLS
    - Create lakehouses (bronze/silver/gold, one per workspace)
    - Configure Mirror, Shortcuts, Eventstream
-   - Upload notebooks, create the 3 pipelines (initial-load, incremental-load, tick)
+   - Upload notebooks, create the 3 pipelines (initial-load, incremental-load, simulate)
 6. Build the notebooks:
    - `00_DEMO_simulate_activity` (bronze WS) — generates + writes to all sinks
    - `10_bronze_weather_pull` (bronze WS) — watermark REST pull

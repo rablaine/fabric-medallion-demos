@@ -12,13 +12,13 @@
 #   Fabric. Pass -WorkspaceName to override if your workspace is renamed.
 #
 # Examples:
-#   # Upload + run the tick notebook against rg-contoso-retail17
+#   # Upload + run the simulate-incremental notebook against rg-contoso-retail17
 #   .\tools\run-fabric-notebook.ps1 -ResourceGroup rg-contoso-retail17 `
-#       -NotebookPath .\fabric\notebooks\10_tick_incremental_data.ipynb -Run
+#       -NotebookPath .\fabric\notebooks\10_simulate_incremental_activity.ipynb -Run
 #
 #   # Just upload (no run)
 #   .\tools\run-fabric-notebook.ps1 -ResourceGroup rg-contoso-retail17 `
-#       -NotebookPath .\fabric\notebooks\10_tick_incremental_data.ipynb
+#       -NotebookPath .\fabric\notebooks\10_simulate_incremental_activity.ipynb
 # =============================================================================
 
 [CmdletBinding()]
