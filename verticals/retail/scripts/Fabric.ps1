@@ -376,6 +376,44 @@ function Invoke-FabricNotebook {
 # Mirrored Database (Azure SQL -> bronze lakehouse via change feed)
 # -----------------------------------------------------------------------------
 
+function Add-FabricWorkspaceRoleAssignment {
+    <#
+    .SYNOPSIS
+        Adds a principal to a workspace with a given role. Used to grant the
+        Azure SQL logical server's system-assigned managed identity (SAMI)
+        Contributor on the workspace -- mirrored databases require the SQL
+        server SAMI to have read+write on the mirror item, which the Fabric
+        portal grants automatically on UI-driven creation but the REST create
+        flow does NOT. Without this, mirror tables stay "Initialized" forever
+        with no rows replicated and no error surfaced.
+    .NOTES
+        Idempotent: re-adding the same principal returns an error containing
+        PrincipalAlreadyHasWorkspaceAccess (or similar), which we swallow.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$PrincipalId,
+        [Parameter(Mandatory)] [ValidateSet('User','Group','ServicePrincipal','ServicePrincipalProfile')] [string]$PrincipalType,
+        [Parameter(Mandatory)] [ValidateSet('Admin','Member','Contributor','Viewer')] [string]$Role
+    )
+    $body = @{
+        principal = @{ id = $PrincipalId; type = $PrincipalType }
+        role      = $Role
+    }
+    try {
+        Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/roleAssignments" -Body $body | Out-Null
+    } catch {
+        $msg = "$_"
+        if ($msg -match 'PrincipalAlreadyHasWorkspaceAccess|AlreadyExists|already') {
+            # benign on re-run
+        } else {
+            throw
+        }
+    }
+}
+
 function Enable-FabricWorkspaceIdentity {
     <#
     .SYNOPSIS
@@ -487,19 +525,30 @@ function New-FabricMirroredAzureSqlDatabase {
     # Mirror definition references a Fabric connection by id (the connection
     # owns the SQL endpoint + auth). We mirror ALL tables; refine later via
     # the Fabric portal if needed.
+    # NOTE: source.typeProperties.landingZone is REQUIRED. Without it the mirror
+    # is created and reports status "Running" but the snapshot engine never
+    # kicks off -- tables sit at "Initialized" with rows=0 forever and no
+    # error is surfaced via REST. The Fabric UI sets this when you create a
+    # mirror via the portal; the REST docs omit it.
     $mirroringJson = @{
         properties = @{
             source = @{
                 type           = 'AzureSqlDatabase'
                 typeProperties = @{
-                    connection = $ConnectionId
+                    connection  = $ConnectionId
+                    landingZone = @{
+                        type           = 'MountedRelationalDatabase'
+                        typeProperties = @{}
+                    }
                 }
             }
             target = @{
                 type           = 'MountedRelationalDatabase'
                 typeProperties = @{
-                    defaultSchema = 'dbo'
-                    format        = 'Delta'
+                    defaultSchema             = 'dbo'
+                    format                    = 'Delta'
+                    retentionInDays           = 1
+                    enableDeltaChangeDataFeed = $false
                 }
             }
         }

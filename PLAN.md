@@ -112,10 +112,10 @@ Each vertical should include:
   1. Bicep: resource group resources (SQL, ADLS, Fabric F2 capacity)
   2. Apply SQL schema
   3. Fabric REST: create 3 workspaces (bronze/silver/gold), assign capacity, create lakehouses
-  4. Fabric REST: upload notebooks + create pipelines (initial-load, incremental-load, tick)
+  4. Fabric REST: upload notebooks + create pipelines (initial-load, incremental-load, simulate)
   5. Fabric REST: run the seed notebook, poll until complete (populates SQL + ADLS)
   6. Print success banner with all resource info; pause for user to read before exit
-- After the script exits, the user manually triggers the initial-load pipeline in Fabric to flow data through bronze → silver → gold. Each pipeline run ends with a tick step that adds fresh activity to the sources so the next incremental load has new data.
+- After the script exits, the user manually triggers the initial-load pipeline in Fabric to flow data through bronze → silver → gold. Each pipeline run ends with a simulate step that adds fresh activity to the sources so the next incremental load has new data.
 
 **Repository Structure:**
 ```
@@ -235,7 +235,7 @@ README.md
 - **End-to-end deploy contract**: see `/memories/repo/architecture.md` (the locked-in deploy.ps1 flow)
 - **Per vertical**: 5 sources (SQL OLTP, ADLS supplier Parquet, ADLS marketing CSV, Event Hub clickstream, Open-Meteo weather REST)
 - **3 workspaces per vertical**: `contoso-{vertical}-1-bronze | -2-silver | -3-gold`, all bound to one auto-provisioned F2 Fabric capacity
-- **Iterative tick**: every load pipeline ends with `00_DEMO_simulate_activity` (Faker) writing fresh rows to SQL + dated files to ADLS, so the next incremental run has new data
+- **Iterative simulate**: every load pipeline ends with `00_DEMO_simulate_activity` (Faker) writing fresh rows to SQL + dated files to ADLS, so the next incremental run has new data
 - **No local scripts**: all generation and processing happens in Fabric notebooks running in the customer tenant
 
 ### Security & Permissions ✅

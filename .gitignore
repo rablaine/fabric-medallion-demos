@@ -39,3 +39,10 @@ build/
 logs/
 
 verticals/*/infra/main.json
+
+# Per-deployment teardown launcher emitted by deploy.ps1 (env-specific IDs)
+verticals/*/teardown.ps1
+verticals/*/teardown.cmd
+
+# Deploy/teardown transcript logs
+verticals/*/logs/

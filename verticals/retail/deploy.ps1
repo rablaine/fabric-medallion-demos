@@ -27,6 +27,17 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
 # -----------------------------------------------------------------------------
+# Tee everything to a timestamped log under logs/ so the user has a permanent
+# record after the console closes (helpful for diagnosing failures).
+# Start-Transcript captures Write-Host output and Read-Host prompts both.
+# -----------------------------------------------------------------------------
+$logDir = Join-Path $PSScriptRoot 'logs'
+if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+$logPath = Join-Path $logDir ("deploy-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+try { Start-Transcript -Path $logPath -Append | Out-Null } catch { }
+Write-Host "Logging to $logPath" -ForegroundColor DarkGray
+
+# -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
 function Write-Step($msg)    { Write-Host "==> $msg" -ForegroundColor Cyan }
@@ -317,6 +328,37 @@ $seedNb = New-FabricNotebookFromFile `
 Remove-Item $bakedNbPath -ErrorAction SilentlyContinue
 Write-Ok "  notebook id=$($seedNb.id)"
 
+# Upload the simulate-incremental notebook too. It uses the same placeholder pattern as the
+# seed (sql_server_fqdn / sql_database_name / subscription_id / resource_group
+# start as empty strings) so we can bake values in the same way. simulate-incremental is NOT
+# run as part of deploy -- it's meant to be triggered later (manually or by a
+# scheduled pipeline) to fill the gap between the seed and "now".
+Write-Step "Uploading simulate-incremental notebook 10_simulate_incremental_activity"
+$simNbPath = Join-Path $PSScriptRoot 'fabric' 'notebooks' '10_simulate_incremental_activity.ipynb'
+$simNbSrc = Get-Content -Raw -Path $simNbPath
+$simNbSrc = $simNbSrc.Replace(
+    'sql_server_fqdn   = \"\"',
+    "sql_server_fqdn   = \`"$($outputs.sqlServerFqdn.value)\`""
+).Replace(
+    'sql_database_name = \"contoso_retail\"',
+    "sql_database_name = \`"$($outputs.sqlDatabaseName.value)\`""
+).Replace(
+    'subscription_id   = \"\"',
+    "subscription_id   = \`"$($selectedSub.id)\`""
+).Replace(
+    'resource_group    = \"\"',
+    "resource_group    = \`"$($config.RESOURCE_GROUP)\`""
+)
+$bakedSimPath = Join-Path ([System.IO.Path]::GetTempPath()) "10_simulate_incremental_activity.baked.$([guid]::NewGuid()).ipynb"
+Set-Content -Path $bakedSimPath -Value $simNbSrc -NoNewline -Encoding utf8
+$simNb = New-FabricNotebookFromFile `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -Name '10_simulate_incremental_activity' `
+    -NotebookPath $bakedSimPath
+Remove-Item $bakedSimPath -ErrorAction SilentlyContinue
+Write-Ok "  notebook id=$($simNb.id)"
+
 # SQL DB is deployed at GP_S_Gen5_8 (min 1.0) so the seed has the throughput it
 # needs out of the gate -- no pre-seed scale-up call. We scale DOWN to Gen5_4
 # (min 0.5) after the seed completes so the demo runs on the idle-cheap SKU.
@@ -418,6 +460,23 @@ $conn = New-FabricSqlConnection `
     -DatabaseName $outputs.sqlDatabaseName.value `
     -WorkspaceId $workspaces['1-bronze'].id
 Write-Ok "  connection id=$($conn.id)"
+
+# Mirror requires the Azure SQL logical server's system-assigned managed
+# identity (SAMI) to have write access on the mirror item so the snapshot
+# engine can push data into OneLake. UI-driven mirror creation grants this
+# automatically; REST does NOT. Without this grant, tables stay "Initialized"
+# forever, status="Running", no error. Adding the SAMI as a workspace
+# Contributor covers all current and future mirror items in the workspace.
+Write-Step "Granting Azure SQL server SAMI Contributor on bronze workspace (required for mirroring)"
+$sqlSamiPid = az sql server show -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --query identity.principalId -o tsv
+if (-not $sqlSamiPid) { throw "Azure SQL server has no system-assigned managed identity" }
+Add-FabricWorkspaceRoleAssignment `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -PrincipalId $sqlSamiPid `
+    -PrincipalType 'ServicePrincipal' `
+    -Role 'Contributor'
+Write-Ok "  granted Contributor to SQL SAMI $sqlSamiPid"
 
 Write-Step "Creating Mirrored Database for Azure SQL -> bronze workspace"
 $mirror = New-FabricMirroredAzureSqlDatabase `
@@ -552,6 +611,86 @@ Write-Host "  - Watch the Mirrored DB status; it should reach 'Running' within a
 Write-Host "  - Browse the lakehouse: Tables (from mirror) and Files/raw (from shortcut)" -ForegroundColor Gray
 Write-Host "  - When ready, ask the deployer to build out silver + gold + pipelines" -ForegroundColor Gray
 Write-Host "  - PAUSE the Fabric capacity in the Azure portal when not in use to save cost" -ForegroundColor Gray
+Write-Host ""
+
+# -----------------------------------------------------------------------------
+# Emit a matching teardown.ps1 with the exact resource names baked in. This
+# lets the user shut everything down with one double-click and no parameters,
+# and -- importantly -- only deletes the workspaces THIS deployment created,
+# not every workspace pinned to the capacity.
+# -----------------------------------------------------------------------------
+$teardownPath = Join-Path $PSScriptRoot 'teardown.ps1'
+$wsLines = ($workspaces.Values | ForEach-Object { "    @{ Id = '$($_.id)'; Name = '$($_.displayName)' }" }) -join ",`r`n"
+$teardownBody = @"
+# Auto-generated by deploy.ps1 on $(Get-Date -Format o)
+# Tears down EXACTLY the resources this deployment created. Hard-coded so the
+# user doesn't have to remember anything. Other workspaces on the capacity are
+# left alone.
+#Requires -Version 7.0
+`$ErrorActionPreference = 'Stop'
+
+`$logDir = Join-Path `$PSScriptRoot 'logs'
+if (-not (Test-Path `$logDir)) { New-Item -ItemType Directory -Path `$logDir -Force | Out-Null }
+`$logPath = Join-Path `$logDir ("teardown-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+try { Start-Transcript -Path `$logPath -Append | Out-Null } catch { }
+Write-Host "Logging to `$logPath" -ForegroundColor DarkGray
+
+`$ResourceGroup = '$($config.RESOURCE_GROUP)'
+`$Subscription  = '$($selectedSub.id)'
+`$CapacityName  = '$($outputs.fabricCapacityName.value)'
+`$Workspaces = @(
+$wsLines
+)
+
+. (Join-Path `$PSScriptRoot 'scripts\Fabric.ps1')
+
+Write-Host ''
+Write-Host 'About to PERMANENTLY DELETE:' -ForegroundColor Yellow
+Write-Host "  Resource group: `$ResourceGroup (subscription `$Subscription)"
+Write-Host "  Capacity:       `$CapacityName"
+Write-Host '  Fabric workspaces:'
+foreach (`$w in `$Workspaces) { Write-Host "    - `$(`$w.Name) (`$(`$w.Id))" }
+Write-Host ''
+`$ans = Read-Host 'Type YES to proceed'
+if (`$ans -ne 'YES') { Write-Host 'Cancelled.'; exit 0 }
+
+az account set --subscription `$Subscription | Out-Null
+
+Write-Host 'Deleting Fabric workspaces...' -ForegroundColor Cyan
+`$fabToken = (az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv)
+foreach (`$w in `$Workspaces) {
+    try {
+        Invoke-FabricRest -Token `$fabToken -Method DELETE -Path "/workspaces/`$(`$w.Id)" | Out-Null
+        Write-Host "  deleted `$(`$w.Name)" -ForegroundColor Green
+    } catch {
+        Write-Host "  skip `$(`$w.Name): `$_" -ForegroundColor DarkYellow
+    }
+}
+
+Write-Host 'Deleting resource group (async)...' -ForegroundColor Cyan
+az group delete --name `$ResourceGroup --yes --no-wait
+
+Write-Host ''
+Write-Host 'Teardown initiated. Resource group deletion runs in the background.' -ForegroundColor Green
+Read-Host 'Press Enter to exit'
+"@
+Set-Content -Path $teardownPath -Value $teardownBody -Encoding UTF8
+
+# Matching .cmd launcher so the user can double-click without thinking about pwsh.
+$teardownCmdPath = Join-Path $PSScriptRoot 'teardown.cmd'
+$teardownCmdBody = @"
+@echo off
+REM Launcher: invokes pwsh 7 via -Command (NOT -File) so stdin/Read-Host work.
+REM Double-click this OR run ``teardown.cmd`` from any shell.
+pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '%~dp0teardown.ps1'"
+if errorlevel 1 (
+    echo.
+    echo Teardown failed. Press any key to close.
+    pause >nul
+)
+"@
+Set-Content -Path $teardownCmdPath -Value $teardownCmdBody -Encoding ASCII
+Write-Host "Generated teardown.ps1 + teardown.cmd next to deploy.ps1 -- double-click teardown.cmd when ready to clean up." -ForegroundColor Cyan
 Write-Host ""
 
 # Pause so the user sees the success message before the window closes.
