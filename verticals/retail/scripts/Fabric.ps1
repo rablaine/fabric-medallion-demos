@@ -376,6 +376,44 @@ function Invoke-FabricNotebook {
 # Mirrored Database (Azure SQL -> bronze lakehouse via change feed)
 # -----------------------------------------------------------------------------
 
+function Add-FabricWorkspaceRoleAssignment {
+    <#
+    .SYNOPSIS
+        Adds a principal to a workspace with a given role. Used to grant the
+        Azure SQL logical server's system-assigned managed identity (SAMI)
+        Contributor on the workspace -- mirrored databases require the SQL
+        server SAMI to have read+write on the mirror item, which the Fabric
+        portal grants automatically on UI-driven creation but the REST create
+        flow does NOT. Without this, mirror tables stay "Initialized" forever
+        with no rows replicated and no error surfaced.
+    .NOTES
+        Idempotent: re-adding the same principal returns an error containing
+        PrincipalAlreadyHasWorkspaceAccess (or similar), which we swallow.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$PrincipalId,
+        [Parameter(Mandatory)] [ValidateSet('User','Group','ServicePrincipal','ServicePrincipalProfile')] [string]$PrincipalType,
+        [Parameter(Mandatory)] [ValidateSet('Admin','Member','Contributor','Viewer')] [string]$Role
+    )
+    $body = @{
+        principal = @{ id = $PrincipalId; type = $PrincipalType }
+        role      = $Role
+    }
+    try {
+        Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/roleAssignments" -Body $body | Out-Null
+    } catch {
+        $msg = "$_"
+        if ($msg -match 'PrincipalAlreadyHasWorkspaceAccess|AlreadyExists|already') {
+            # benign on re-run
+        } else {
+            throw
+        }
+    }
+}
+
 function Enable-FabricWorkspaceIdentity {
     <#
     .SYNOPSIS

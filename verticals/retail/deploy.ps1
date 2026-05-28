@@ -461,6 +461,23 @@ $conn = New-FabricSqlConnection `
     -WorkspaceId $workspaces['1-bronze'].id
 Write-Ok "  connection id=$($conn.id)"
 
+# Mirror requires the Azure SQL logical server's system-assigned managed
+# identity (SAMI) to have write access on the mirror item so the snapshot
+# engine can push data into OneLake. UI-driven mirror creation grants this
+# automatically; REST does NOT. Without this grant, tables stay "Initialized"
+# forever, status="Running", no error. Adding the SAMI as a workspace
+# Contributor covers all current and future mirror items in the workspace.
+Write-Step "Granting Azure SQL server SAMI Contributor on bronze workspace (required for mirroring)"
+$sqlSamiPid = az sql server show -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --query identity.principalId -o tsv
+if (-not $sqlSamiPid) { throw "Azure SQL server has no system-assigned managed identity" }
+Add-FabricWorkspaceRoleAssignment `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -PrincipalId $sqlSamiPid `
+    -PrincipalType 'ServicePrincipal' `
+    -Role 'Contributor'
+Write-Ok "  granted Contributor to SQL SAMI $sqlSamiPid"
+
 Write-Step "Creating Mirrored Database for Azure SQL -> bronze workspace"
 $mirror = New-FabricMirroredAzureSqlDatabase `
     -Token $fabricToken `
