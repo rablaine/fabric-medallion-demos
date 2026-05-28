@@ -866,6 +866,13 @@ function New-FabricEventstreamWithEventhouseDest {
         ONLY IF the target table + ingestion mapping were declared in the KQL
         database definition (DatabaseSchema.kql). Use
         New-FabricKqlDatabaseWithSchema to set that up.
+
+        IMPORTANT: KqlDatabaseItemId must be the id of the KQL Database item
+        (the child item under the Eventhouse), NOT the Eventhouse item id.
+        An Eventhouse can host multiple KQL DBs, so the parent eventhouse id
+        cannot be used to disambiguate the destination -- using it leaves the
+        destination stuck in 'Warning' status with no ingestion failures and
+        no auto-provisioned Kusto data connection.
     .OUTPUTS
         Hashtable with eventstreamId, sourceId, sourceName, destinationId,
         and connectionName.
@@ -875,7 +882,7 @@ function New-FabricEventstreamWithEventhouseDest {
         [Parameter(Mandatory)] [string]$Token,
         [Parameter(Mandatory)] [string]$WorkspaceId,
         [Parameter(Mandatory)] [string]$Name,
-        [Parameter(Mandatory)] [string]$EventhouseItemId,
+        [Parameter(Mandatory)] [string]$KqlDatabaseItemId,
         [Parameter(Mandatory)] [string]$TableName,
         [Parameter(Mandatory)] [string]$MappingRuleName,
         [string]$SourceName      = 'clickstream-source',
@@ -903,7 +910,7 @@ function New-FabricEventstreamWithEventhouseDest {
                    properties = @{
                        dataIngestionMode = 'DirectIngestion'
                        workspaceId       = $WorkspaceId
-                       itemId            = $EventhouseItemId
+                       itemId            = $KqlDatabaseItemId
                        tableName         = $TableName
                        connectionName    = $connName
                        mappingRuleName   = $MappingRuleName

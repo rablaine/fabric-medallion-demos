@@ -588,7 +588,7 @@ $es = New-FabricEventstreamWithEventhouseDest `
     -Token $fabricToken `
     -WorkspaceId $workspaces['1-bronze'].id `
     -Name 'clickstream_es' `
-    -EventhouseItemId $eventhouse.id `
+    -KqlDatabaseItemId $kqldb.id `
     -TableName 'Clickstream' `
     -MappingRuleName 'clickstream_json_map' `
     -Description 'Clickstream ingestion stream'
@@ -682,6 +682,18 @@ az functionapp config appsettings set `
     --output none
 if ($LASTEXITCODE -ne 0) { throw "Failed to set EVENTHUB_CONNECTION_STRING on $($outputs.functionAppName.value)" }
 Write-Ok "  EVENTHUB_CONNECTION_STRING set (Function will restart and begin emitting)"
+
+# Flex Consumption does NOT auto-discover triggers in a freshly-uploaded
+# package after OneDeploy + restart -- the host scans wwwroot before the new
+# package is mounted and ends up with zero registered functions (timer never
+# fires, Clickstream stays empty). Forcing a syncfunctiontriggers makes the
+# host re-scan against the just-deployed package. Without this the function
+# app silently does nothing until manually kicked.
+Write-Step "Syncing function triggers (Flex Consumption requires explicit sync after OneDeploy)"
+$syncUri = "https://management.azure.com/subscriptions/$($selectedSub.id)/resourceGroups/$($config.RESOURCE_GROUP)/providers/Microsoft.Web/sites/$($outputs.functionAppName.value)/syncfunctiontriggers?api-version=2022-03-01"
+az rest --method post --uri $syncUri --output none
+if ($LASTEXITCODE -ne 0) { Write-Info "  syncfunctiontriggers returned non-zero (often benign; will retry once)"; Start-Sleep 10; az rest --method post --uri $syncUri --output none }
+Write-Ok "  triggers synced"
 Write-Info "  emitter fires every 30s -> Fabric Eventstream '$($es.sourceName)' -> Eventhouse 'Clickstream' table"
 
 # -----------------------------------------------------------------------------
@@ -750,6 +762,7 @@ Write-Host "Logging to `$logPath" -ForegroundColor DarkGray
 
 `$ResourceGroup = '$($config.RESOURCE_GROUP)'
 `$Subscription  = '$($selectedSub.id)'
+`$TenantId      = '$($selectedSub.tenantId)'
 `$CapacityName  = '$($outputs.fabricCapacityName.value)'
 `$Workspaces = @(
 $wsLines
@@ -757,9 +770,95 @@ $wsLines
 
 . (Join-Path `$PSScriptRoot 'scripts\Fabric.ps1')
 
+# -----------------------------------------------------------------------------
+# Tenant / subscription verification + existence preflight.
+# Teardown is destructive and silent failures ("nothing to delete") are bad --
+# if the user is signed into the wrong tenant we want to STOP and offer to
+# re-auth, not pretend the deletion succeeded.
+# -----------------------------------------------------------------------------
+function Get-AzContext {
+    try { az account show -o json 2>`$null | ConvertFrom-Json } catch { `$null }
+}
+function Test-FabricWorkspace {
+    param(`$Token, `$Id)
+    try { Invoke-FabricRest -Token `$Token -Method GET -Path "/workspaces/`$Id" | Out-Null; `$true } catch { `$false }
+}
+function Invoke-Preflight {
+    `$ctx = Get-AzContext
+    if (-not `$ctx) { return [pscustomobject]@{ Ok=`$false; Reason='not-logged-in'; Ctx=`$null; RgExists=`$false; WsExists=`$false } }
+    `$rgExists = (az group exists --subscription `$ctx.id --name `$ResourceGroup) -eq 'true'
+    `$wsExists = `$false
+    try {
+        `$fabTok = az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv 2>`$null
+        if (`$fabTok -and `$Workspaces.Count -gt 0) {
+            `$wsExists = Test-FabricWorkspace -Token `$fabTok -Id `$Workspaces[0].Id
+        }
+    } catch { }
+    `$tenantOk = (`$ctx.tenantId -eq `$TenantId)
+    `$subOk    = (`$ctx.id       -eq `$Subscription)
+    `$ok = `$tenantOk -and `$subOk -and (`$rgExists -or `$wsExists)
+    [pscustomobject]@{ Ok=`$ok; Reason=''; Ctx=`$ctx; TenantOk=`$tenantOk; SubOk=`$subOk; RgExists=`$rgExists; WsExists=`$wsExists }
+}
+
+`$pre = Invoke-Preflight
+if (-not `$pre.Ok) {
+    Write-Host ''
+    Write-Host 'Preflight check FAILED -- not safe to proceed.' -ForegroundColor Red
+    Write-Host ''
+    Write-Host 'Expected:' -ForegroundColor Yellow
+    Write-Host "  Tenant:       `$TenantId"
+    Write-Host "  Subscription: `$Subscription"
+    Write-Host "  ResourceGrp:  `$ResourceGroup"
+    Write-Host ''
+    if (`$pre.Ctx) {
+        Write-Host 'Currently signed in as:' -ForegroundColor Yellow
+        Write-Host "  User:         `$(`$pre.Ctx.user.name)"
+        Write-Host "  Tenant:       `$(`$pre.Ctx.tenantId)"
+        Write-Host "  Subscription: `$(`$pre.Ctx.id) (`$(`$pre.Ctx.name))"
+        Write-Host ''
+        Write-Host 'Status:' -ForegroundColor Yellow
+        Write-Host ("  Tenant match:           {0}" -f `$(if (`$pre.TenantOk) {'yes'} else {'NO'}))
+        Write-Host ("  Subscription match:     {0}" -f `$(if (`$pre.SubOk)    {'yes'} else {'NO'}))
+        Write-Host ("  Resource group exists:  {0}" -f `$(if (`$pre.RgExists) {'yes'} else {'NO'}))
+        Write-Host ("  Fabric workspace found: {0}" -f `$(if (`$pre.WsExists) {'yes'} else {'NO'}))
+    } else {
+        Write-Host 'Not signed in to Azure CLI.' -ForegroundColor Yellow
+    }
+    Write-Host ''
+    Write-Host 'This usually means you are signed into the wrong tenant or subscription,'
+    Write-Host 'or the deployment was already torn down.'
+    Write-Host ''
+    `$run = Read-Host "Run 'az login --tenant `$TenantId' now? [y/N]"
+    if (`$run -match '^(y|yes)`$') {
+        az logout 2>`$null | Out-Null
+        az login --tenant `$TenantId | Out-Null
+        if (`$LASTEXITCODE -ne 0) { Write-Host 'az login failed. Aborting.' -ForegroundColor Red; exit 1 }
+        az account set --subscription `$Subscription | Out-Null
+        if (`$LASTEXITCODE -ne 0) {
+            Write-Host "Could not set subscription `$Subscription. Available subscriptions in this tenant:" -ForegroundColor Red
+            az account list --query "[?tenantId=='`$TenantId'].{name:name,id:id}" -o table
+            exit 1
+        }
+        `$pre = Invoke-Preflight
+        if (-not `$pre.Ok) {
+            Write-Host ''
+            Write-Host 'Preflight still failing after re-auth. Nothing to delete (or wrong account). Aborting.' -ForegroundColor Red
+            if (`$pre.Ctx) { Write-Host "  signed in as `$(`$pre.Ctx.user.name) / tenant=`$(`$pre.Ctx.tenantId) / sub=`$(`$pre.Ctx.id)" }
+            Write-Host "  RG exists=`$(`$pre.RgExists)  Workspace exists=`$(`$pre.WsExists)"
+            exit 1
+        }
+        Write-Host 'Re-auth succeeded; preflight passed.' -ForegroundColor Green
+    } else {
+        Write-Host 'Aborting.' -ForegroundColor Yellow; exit 1
+    }
+}
+
 Write-Host ''
 Write-Host 'About to PERMANENTLY DELETE:' -ForegroundColor Yellow
-Write-Host "  Resource group: `$ResourceGroup (subscription `$Subscription)"
+Write-Host "  Signed in as:   `$(`$pre.Ctx.user.name)"
+Write-Host "  Tenant:         `$TenantId"
+Write-Host "  Subscription:   `$Subscription (`$(`$pre.Ctx.name))"
+Write-Host "  Resource group: `$ResourceGroup"
 Write-Host "  Capacity:       `$CapacityName"
 Write-Host '  Fabric workspaces:'
 foreach (`$w in `$Workspaces) { Write-Host "    - `$(`$w.Name) (`$(`$w.Id))" }

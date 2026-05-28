@@ -172,42 +172,22 @@ resource funcApp 'Microsoft.Web/sites@2024-04-01' = {
 // -----------------------------------------------------------------------------
 // RBAC
 // Built-in role IDs:
-//   Storage Blob Data Owner          = b7e6dc6d-f1e8-4753-8033-0f276bb0955b
-//   Storage Queue Data Contributor   = 974c5e8b-45b9-4653-ba55-5f855dd0fb88
-//   Storage Table Data Contributor   = 0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3
+//   Storage Blob Data Owner          = b7e6dc6d-f1e8-4753-8033-0f276bb0955b  (in function-storage-rbac.bicep)
+//   Storage Queue Data Contributor   = 974c5e8b-45b9-4653-ba55-5f855dd0fb88  (in function-storage-rbac.bicep)
+//   Storage Table Data Contributor   = 0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3  (in function-storage-rbac.bicep)
 //   Website Contributor              = de139f84-1756-47ae-9be6-808fbbe84772
 // -----------------------------------------------------------------------------
-var roleBlobOwner          = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
-var roleQueueWriter        = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
-var roleTableWriter        = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 var roleWebsiteContributor = 'de139f84-1756-47ae-9be6-808fbbe84772'
 
 // Function MSI -- read/write its own storage (runtime + deployment package).
-resource msiBlob 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: funcStorage
-  name: guid(funcStorage.id, funcApp.id, roleBlobOwner)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleBlobOwner)
-    principalId: funcApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-resource msiQueue 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: funcStorage
-  name: guid(funcStorage.id, funcApp.id, roleQueueWriter)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleQueueWriter)
-    principalId: funcApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-resource msiTable 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: funcStorage
-  name: guid(funcStorage.id, funcApp.id, roleTableWriter)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleTableWriter)
-    principalId: funcApp.identity.principalId
-    principalType: 'ServicePrincipal'
+// Nested in a separate module so principalId can be a parameter, which makes
+// it usable in the role-assignment guid() name. See function-storage-rbac.bicep
+// for the rotation-safety rationale.
+module funcStorageRbac 'function-storage-rbac.bicep' = {
+  name: 'funcStorageRbac'
+  params: {
+    storageAccountName: funcStorage.name
+    principalId:        funcApp.identity.principalId
   }
 }
 

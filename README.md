@@ -1,5 +1,11 @@
 # Contoso - Vertical Data Estate Builder
 
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Bicep](https://img.shields.io/badge/Bicep-3178C6?logo=azurepipelines&logoColor=white)
+![Medallion](https://img.shields.io/badge/Architecture-Medallion-CD7F32)
+![License: MIT](https://img.shields.io/badge/License-MIT-50fa7b)
+
 A web app that generates complete, deployable Azure data estate solutions for different industry verticals. Build full fictional companies with realistic data, production-quality architectures, and executive-level reporting - all running on Azure.
 
 ## What It Does
