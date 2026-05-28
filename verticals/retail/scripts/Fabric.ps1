@@ -699,3 +699,304 @@ function New-FabricAdlsShortcut {
     $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/items/$LakehouseId/shortcuts" -Body $body
     return $r.Body
 }
+
+# -----------------------------------------------------------------------------
+# Eventhouse + KQL Database (Eventstream DirectIngestion pipeline)
+# -----------------------------------------------------------------------------
+
+function New-FabricEventhouse {
+    <#
+    .SYNOPSIS
+        Creates an Eventhouse in the workspace. Idempotent on displayName.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [string]$Description = ''
+    )
+    $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/eventhouses").Body
+    $existing = $list.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    if ($existing) {
+        Write-Verbose "Eventhouse '$Name' exists (id=$($existing.id))"
+        return $existing
+    }
+    $body = @{ displayName = $Name }
+    if ($Description) { $body.description = $Description }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/eventhouses" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create eventhouse $Name" | Out-Null
+        $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/eventhouses").Body
+        return $list.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    }
+    return $r.Body
+}
+
+function New-FabricKqlDatabaseWithSchema {
+    <#
+    .SYNOPSIS
+        Creates a KQL database under an Eventhouse with table + ingestion
+        mapping baked into the definition. This is REQUIRED for Eventstream
+        Eventhouse DirectIngestion destinations -- creating table/mapping
+        via Kusto mgmt API after the fact leaves the table un-registered in
+        the Fabric catalog, so Fabric never provisions the Kusto pull
+        data connection and the eventstream destination stays in "Warning".
+        See: https://learn.microsoft.com/fabric/real-time-intelligence/event-streams/api-kusto-pull-destination
+    .PARAMETER SchemaKql
+        Multi-line KQL script. Must include .create-merge table ...
+        and .create-or-alter table ... ingestion json mapping '<name>' "...".
+    .OUTPUTS
+        KQL database object (with id and properties.queryServiceUri).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$EventhouseItemId,
+        [Parameter(Mandatory)] [string]$SchemaKql,
+        [string]$Description = ''
+    )
+    $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/kqlDatabases").Body
+    $existing = $list.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    if ($existing) {
+        Write-Verbose "KQL DB '$Name' exists (id=$($existing.id))"
+        return $existing
+    }
+
+    $dbProps = @{
+        databaseType                = 'ReadWrite'
+        parentEventhouseItemId      = $EventhouseItemId
+        oneLakeCachingPeriod        = 'P36500D'
+        oneLakeStandardStoragePeriod = 'P36500D'
+    } | ConvertTo-Json -Depth 5 -Compress
+
+    $body = @{
+        displayName = $Name
+        description = $Description
+        definition  = @{
+            parts = @(
+                @{ path = 'DatabaseProperties.json'
+                   payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($dbProps))
+                   payloadType = 'InlineBase64' }
+                @{ path = 'DatabaseSchema.kql'
+                   payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($SchemaKql))
+                   payloadType = 'InlineBase64' }
+            )
+        }
+    }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/kqlDatabases" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create kqldb $Name" | Out-Null
+    }
+    $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/kqlDatabases").Body
+    return $list.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+}
+
+function Invoke-KustoMgmt {
+    <#
+    .SYNOPSIS
+        Runs a Kusto .control command against a Fabric KQL database.
+    .PARAMETER QueryServiceUri
+        From kqlDatabase.properties.queryServiceUri.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$QueryServiceUri,
+        [Parameter(Mandatory)] [string]$DatabaseName,
+        [Parameter(Mandatory)] [string]$Csl
+    )
+    $json = az account get-access-token --resource $QueryServiceUri --output json 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to get Kusto token for $QueryServiceUri" }
+    $tok = ($json | ConvertFrom-Json).accessToken
+    $body = @{ db = $DatabaseName; csl = $Csl } | ConvertTo-Json -Compress
+    $r = Invoke-RestMethod -Method POST -Uri "$QueryServiceUri/v1/rest/mgmt" `
+        -Headers @{ Authorization = "Bearer $tok"; 'Content-Type' = 'application/json' } `
+        -Body $body -ErrorAction Stop
+    return $r
+}
+
+function Grant-FabricKqlDatabaseWorkspaceIdentityAccess {
+    <#
+    .SYNOPSIS
+        Grants the workspace managed identity Ingestor + Viewer access to a
+        KQL database. Required so the Eventstream-provisioned Kusto pull
+        data connection can write to the table.
+    .PARAMETER WorkspaceIdentityAppId
+        From (Enable-FabricWorkspaceIdentity).applicationId.
+    .PARAMETER TenantId
+        AAD tenant GUID. Defaults to current az login tenant.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$QueryServiceUri,
+        [Parameter(Mandatory)] [string]$DatabaseName,
+        [Parameter(Mandatory)] [string]$WorkspaceIdentityAppId,
+        [string]$TenantId
+    )
+    if (-not $TenantId) {
+        $TenantId = (az account show --query tenantId -o tsv 2>$null)
+    }
+    $principal = "aadapp=$WorkspaceIdentityAppId;$TenantId"
+    foreach ($role in @('ingestors','viewers')) {
+        $csl = ".add database ['$DatabaseName'] $role ('$principal') 'Fabric workspace identity for eventstream'"
+        try {
+            Invoke-KustoMgmt -QueryServiceUri $QueryServiceUri -DatabaseName $DatabaseName -Csl $csl | Out-Null
+        } catch {
+            # Idempotent: ignore already-exists
+            if ("$_" -notmatch 'already|Exists') { throw }
+        }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Eventstream (CustomEndpoint -> Eventhouse DirectIngestion)
+# -----------------------------------------------------------------------------
+
+function New-FabricEventstreamWithEventhouseDest {
+    <#
+    .SYNOPSIS
+        Creates an Eventstream with a CustomEndpoint source (Fabric-managed
+        SAS endpoint -- exempt from Azure EH tenant SAS policies) and an
+        Eventhouse DirectIngestion destination, then resumes the stream so
+        it starts pulling.
+    .DESCRIPTION
+        The destination's Kusto data connection is auto-provisioned by Fabric
+        ONLY IF the target table + ingestion mapping were declared in the KQL
+        database definition (DatabaseSchema.kql). Use
+        New-FabricKqlDatabaseWithSchema to set that up.
+
+        IMPORTANT: KqlDatabaseItemId must be the id of the KQL Database item
+        (the child item under the Eventhouse), NOT the Eventhouse item id.
+        An Eventhouse can host multiple KQL DBs, so the parent eventhouse id
+        cannot be used to disambiguate the destination -- using it leaves the
+        destination stuck in 'Warning' status with no ingestion failures and
+        no auto-provisioned Kusto data connection.
+    .OUTPUTS
+        Hashtable with eventstreamId, sourceId, sourceName, destinationId,
+        and connectionName.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$KqlDatabaseItemId,
+        [Parameter(Mandatory)] [string]$TableName,
+        [Parameter(Mandatory)] [string]$MappingRuleName,
+        [string]$SourceName      = 'clickstream-source',
+        [string]$DestinationName = 'clickstream-eventhouse',
+        [string]$StreamName      = 'clickstream-stream',
+        [string]$Description     = ''
+    )
+
+    $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/eventstreams").Body
+    $existing = $list.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    $esId = $null
+    if ($existing) {
+        Write-Verbose "Eventstream '$Name' exists (id=$($existing.id))"
+        $esId = $existing.id
+    }
+    else {
+        $suffix = -join ((48..57) + (97..122) | Get-Random -Count 4 | ForEach-Object { [char]$_ })
+        $connName = "es-eh-conn-$suffix"
+        $topology = @{
+            sources = @(
+                @{ name = $SourceName; type = 'CustomEndpoint'; properties = @{} }
+            )
+            destinations = @(
+                @{ name = $DestinationName; type = 'Eventhouse'
+                   properties = @{
+                       dataIngestionMode = 'DirectIngestion'
+                       workspaceId       = $WorkspaceId
+                       itemId            = $KqlDatabaseItemId
+                       tableName         = $TableName
+                       connectionName    = $connName
+                       mappingRuleName   = $MappingRuleName
+                   }
+                   inputNodes = @(@{ name = $StreamName }) }
+            )
+            streams = @(
+                @{ name = $StreamName; type = 'DefaultStream'; properties = @{}
+                   inputNodes = @(@{ name = $SourceName }) }
+            )
+            operators = @()
+            compatibilityLevel = '1.1'
+        }
+        $esJson = $topology | ConvertTo-Json -Depth 20 -Compress
+        $platform = @{
+            '$schema' = 'https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json'
+            metadata  = @{ type = 'Eventstream'; displayName = $Name; description = $Description }
+            config    = @{ version = '2.0'; logicalId = '00000000-0000-0000-0000-000000000000' }
+        } | ConvertTo-Json -Depth 8 -Compress
+
+        $body = @{
+            displayName = $Name
+            type        = 'Eventstream'
+            description = $Description
+            definition  = @{
+                parts = @(
+                    @{ path = 'eventstream.json'
+                       payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($esJson))
+                       payloadType = 'InlineBase64' }
+                    @{ path = '.platform'
+                       payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($platform))
+                       payloadType = 'InlineBase64' }
+                )
+            }
+        }
+        $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/items" -Body $body
+        if ($r.Status -eq 202 -and $r.OperationLocation) {
+            Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create eventstream $Name" | Out-Null
+        }
+        $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/eventstreams").Body
+        $created = $list.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+        if (-not $created) { throw "Eventstream '$Name' was not created" }
+        $esId = $created.id
+    }
+
+    # Resume the eventstream (newly-created streams stay paused until started)
+    try {
+        $resumeBody = '{"startType":"Now"}'
+        $hdr = @{ Authorization = "Bearer $Token"; 'Content-Type' = 'application/json' }
+        Invoke-WebRequest -Method POST `
+            -Uri "$script:FabricApiBase/workspaces/$WorkspaceId/eventstreams/$esId/resume" `
+            -Headers $hdr -Body $resumeBody -SkipHttpErrorCheck | Out-Null
+    } catch {
+        Write-Warning "Eventstream resume failed (non-fatal): $_"
+    }
+
+    $topology = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/eventstreams/$esId/topology").Body
+    $src = $topology.sources | Select-Object -First 1
+    $dst = $topology.destinations | Select-Object -First 1
+    return @{
+        eventstreamId   = $esId
+        sourceId        = $src.id
+        sourceName      = $src.name
+        destinationId   = $dst.id
+        connectionName  = $dst.properties.connectionName
+    }
+}
+
+function Get-FabricEventstreamSourceConnectionString {
+    <#
+    .SYNOPSIS
+        Returns the EH-compatible SAS connection string for a CustomEndpoint
+        source on an Eventstream. Use this to seed the Function app's
+        EVENTHUB_CONNECTION_STRING setting.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$EventstreamId,
+        [Parameter(Mandatory)] [string]$SourceId
+    )
+    $r = (Invoke-FabricRest -Token $Token -Method GET `
+        -Path "/workspaces/$WorkspaceId/eventstreams/$EventstreamId/sources/$SourceId/connection").Body
+    if (-not $r.accessKeys.primaryConnectionString) {
+        throw "Source connection response missing accessKeys.primaryConnectionString"
+    }
+    return $r.accessKeys.primaryConnectionString
+}

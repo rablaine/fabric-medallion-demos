@@ -5,8 +5,7 @@
   "Values": {
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "python",
-    "EVENTHUB_NAMESPACE_FQDN": "<your-ns>.servicebus.windows.net",
-    "EVENTHUB_NAME": "clickstream",
+    "EVENTHUB_CONNECTION_STRING": "<Fabric Eventstream CustomEndpoint source primary connection string>",
     "TIMER_SCHEDULE": "*/30 * * * * *",
     "EVENTS_PER_FIRE": "50"
   }
