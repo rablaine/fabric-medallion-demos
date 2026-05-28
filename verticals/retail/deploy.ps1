@@ -27,11 +27,13 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
 # -----------------------------------------------------------------------------
-# Tee everything to a timestamped log next to the script so the user has a
-# permanent record after the console closes (helpful for diagnosing failures).
+# Tee everything to a timestamped log under logs/ so the user has a permanent
+# record after the console closes (helpful for diagnosing failures).
 # Start-Transcript captures Write-Host output and Read-Host prompts both.
 # -----------------------------------------------------------------------------
-$logPath = Join-Path $PSScriptRoot ("deploy-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$logDir = Join-Path $PSScriptRoot 'logs'
+if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+$logPath = Join-Path $logDir ("deploy-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 try { Start-Transcript -Path $logPath -Append | Out-Null } catch { }
 Write-Host "Logging to $logPath" -ForegroundColor DarkGray
 
@@ -610,7 +612,9 @@ $teardownBody = @"
 #Requires -Version 7.0
 `$ErrorActionPreference = 'Stop'
 
-`$logPath = Join-Path `$PSScriptRoot ("teardown-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+`$logDir = Join-Path `$PSScriptRoot 'logs'
+if (-not (Test-Path `$logDir)) { New-Item -ItemType Directory -Path `$logDir -Force | Out-Null }
+`$logPath = Join-Path `$logDir ("teardown-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 try { Start-Transcript -Path `$logPath -Append | Out-Null } catch { }
 Write-Host "Logging to `$logPath" -ForegroundColor DarkGray
 
