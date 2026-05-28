@@ -487,19 +487,30 @@ function New-FabricMirroredAzureSqlDatabase {
     # Mirror definition references a Fabric connection by id (the connection
     # owns the SQL endpoint + auth). We mirror ALL tables; refine later via
     # the Fabric portal if needed.
+    # NOTE: source.typeProperties.landingZone is REQUIRED. Without it the mirror
+    # is created and reports status "Running" but the snapshot engine never
+    # kicks off -- tables sit at "Initialized" with rows=0 forever and no
+    # error is surfaced via REST. The Fabric UI sets this when you create a
+    # mirror via the portal; the REST docs omit it.
     $mirroringJson = @{
         properties = @{
             source = @{
                 type           = 'AzureSqlDatabase'
                 typeProperties = @{
-                    connection = $ConnectionId
+                    connection  = $ConnectionId
+                    landingZone = @{
+                        type           = 'MountedRelationalDatabase'
+                        typeProperties = @{}
+                    }
                 }
             }
             target = @{
                 type           = 'MountedRelationalDatabase'
                 typeProperties = @{
-                    defaultSchema = 'dbo'
-                    format        = 'Delta'
+                    defaultSchema             = 'dbo'
+                    format                    = 'Delta'
+                    retentionInDays           = 1
+                    enableDeltaChangeDataFeed = $false
                 }
             }
         }

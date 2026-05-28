@@ -326,6 +326,37 @@ $seedNb = New-FabricNotebookFromFile `
 Remove-Item $bakedNbPath -ErrorAction SilentlyContinue
 Write-Ok "  notebook id=$($seedNb.id)"
 
+# Upload the tick notebook too. It uses the same placeholder pattern as the
+# seed (sql_server_fqdn / sql_database_name / subscription_id / resource_group
+# start as empty strings) so we can bake values in the same way. Tick is NOT
+# run as part of deploy -- it's meant to be triggered later (manually or by a
+# scheduled pipeline) to fill the gap between the seed and "now".
+Write-Step "Uploading tick notebook 10_tick_incremental_data"
+$tickNbPath = Join-Path $PSScriptRoot 'fabric' 'notebooks' '10_tick_incremental_data.ipynb'
+$tickNbSrc = Get-Content -Raw -Path $tickNbPath
+$tickNbSrc = $tickNbSrc.Replace(
+    'sql_server_fqdn   = \"\"',
+    "sql_server_fqdn   = \`"$($outputs.sqlServerFqdn.value)\`""
+).Replace(
+    'sql_database_name = \"contoso_retail\"',
+    "sql_database_name = \`"$($outputs.sqlDatabaseName.value)\`""
+).Replace(
+    'subscription_id   = \"\"',
+    "subscription_id   = \`"$($selectedSub.id)\`""
+).Replace(
+    'resource_group    = \"\"',
+    "resource_group    = \`"$($config.RESOURCE_GROUP)\`""
+)
+$bakedTickPath = Join-Path ([System.IO.Path]::GetTempPath()) "10_tick_incremental_data.baked.$([guid]::NewGuid()).ipynb"
+Set-Content -Path $bakedTickPath -Value $tickNbSrc -NoNewline -Encoding utf8
+$tickNb = New-FabricNotebookFromFile `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -Name '10_tick_incremental_data' `
+    -NotebookPath $bakedTickPath
+Remove-Item $bakedTickPath -ErrorAction SilentlyContinue
+Write-Ok "  notebook id=$($tickNb.id)"
+
 # SQL DB is deployed at GP_S_Gen5_8 (min 1.0) so the seed has the throughput it
 # needs out of the gate -- no pre-seed scale-up call. We scale DOWN to Gen5_4
 # (min 0.5) after the seed completes so the demo runs on the idle-cheap SKU.
