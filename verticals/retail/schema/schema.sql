@@ -150,6 +150,9 @@ GO
 -- -----------------------------------------------------------------------------
 -- stores (physical retail)
 -- -----------------------------------------------------------------------------
+-- latitude/longitude are required so downstream notebooks (weather ingest,
+-- geo analytics) can hit external APIs and join without a separate geocode
+-- step. region is a coarse rollup used by gold marts (e.g. East/West/Central/South).
 IF OBJECT_ID('retail.stores', 'U') IS NULL
 CREATE TABLE retail.stores (
     store_id            INT             NOT NULL PRIMARY KEY,
@@ -160,10 +163,64 @@ CREATE TABLE retail.stores (
     state               NVARCHAR(50)    NULL,
     postal_code         NVARCHAR(20)    NULL,
     country             NVARCHAR(50)    NOT NULL,
+    region              NVARCHAR(30)    NULL,
+    latitude            DECIMAL(9,6)    NULL,
+    longitude           DECIMAL(9,6)    NULL,
     opened_at           DATE            NOT NULL,
     square_feet         INT             NULL,
     manager_name        NVARCHAR(100)   NULL
 );
+GO
+
+-- -----------------------------------------------------------------------------
+-- HR: job_titles (reference) + employees
+-- -----------------------------------------------------------------------------
+-- Salary bands stored on job_titles let the seeder generate realistic salaries
+-- and let analytics show "actual vs band" without joining external data.
+-- department + level support typical HR cuts (headcount by dept, turnover by level).
+IF OBJECT_ID('retail.job_titles', 'U') IS NULL
+CREATE TABLE retail.job_titles (
+    job_title_id        INT             NOT NULL PRIMARY KEY,
+    title               NVARCHAR(100)   NOT NULL,
+    department          NVARCHAR(50)    NOT NULL,
+    job_level           NVARCHAR(20)    NOT NULL,  -- IC1/IC2/IC3/M1/M2/M3/Exec
+    min_salary          DECIMAL(10,2)   NOT NULL,
+    max_salary          DECIMAL(10,2)   NOT NULL,
+    is_store_role       BIT             NOT NULL DEFAULT 0
+);
+GO
+
+-- employees: store_id NULL = corporate/HQ. manager_id self-references; root
+-- (CEO) has manager_id NULL. termination_date NULL = currently active.
+IF OBJECT_ID('retail.employees', 'U') IS NULL
+CREATE TABLE retail.employees (
+    employee_id         INT             NOT NULL PRIMARY KEY,
+    first_name          NVARCHAR(100)   NOT NULL,
+    last_name           NVARCHAR(100)   NOT NULL,
+    email               NVARCHAR(255)   NOT NULL UNIQUE,
+    phone               NVARCHAR(20)    NULL,
+    date_of_birth       DATE            NULL,
+    gender              NVARCHAR(20)    NULL,
+    hire_date           DATE            NOT NULL,
+    termination_date    DATE            NULL,
+    job_title_id        INT             NOT NULL,
+    store_id            INT             NULL,
+    manager_id          INT             NULL,
+    annual_salary       DECIMAL(10,2)   NOT NULL,
+    is_active           BIT             NOT NULL DEFAULT 1,
+    created_at          DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT FK_employees_title   FOREIGN KEY (job_title_id) REFERENCES retail.job_titles(job_title_id),
+    CONSTRAINT FK_employees_store   FOREIGN KEY (store_id)     REFERENCES retail.stores(store_id),
+    CONSTRAINT FK_employees_manager FOREIGN KEY (manager_id)   REFERENCES retail.employees(employee_id)
+);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_employees_store')
+    CREATE INDEX IX_employees_store ON retail.employees(store_id);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_employees_manager')
+    CREATE INDEX IX_employees_manager ON retail.employees(manager_id);
 GO
 
 -- -----------------------------------------------------------------------------
@@ -227,6 +284,7 @@ CREATE TABLE retail.orders (
     total_amount        DECIMAL(12,2)   NOT NULL,
     currency            CHAR(3)         NOT NULL DEFAULT 'USD',
     promotion_id        INT             NULL,
+    employee_id         INT             NULL,  -- cashier / sales associate for in-store orders; NULL for online/mobile
     ship_address_line1  NVARCHAR(255)   NULL,
     ship_city           NVARCHAR(100)   NULL,
     ship_state          NVARCHAR(50)    NULL,
@@ -235,6 +293,7 @@ CREATE TABLE retail.orders (
     CONSTRAINT FK_orders_customer  FOREIGN KEY (customer_id)  REFERENCES retail.customers(customer_id),
     CONSTRAINT FK_orders_store     FOREIGN KEY (store_id)     REFERENCES retail.stores(store_id),
     CONSTRAINT FK_orders_promotion FOREIGN KEY (promotion_id) REFERENCES retail.promotions(promotion_id),
+    CONSTRAINT FK_orders_employee  FOREIGN KEY (employee_id)  REFERENCES retail.employees(employee_id),
     CONSTRAINT CK_orders_channel CHECK (channel IN ('online', 'store', 'mobile')),
     CONSTRAINT CK_orders_status  CHECK (order_status IN ('pending','paid','shipped','delivered','cancelled','refunded'))
 );
