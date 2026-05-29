@@ -404,6 +404,114 @@ function Invoke-FabricNotebook {
     }
 }
 
+function New-FabricDataPipelineFromFile {
+    <#
+    .SYNOPSIS
+        Creates (or updates) a Fabric Data Pipeline from a local
+        pipeline-content.json file. Supports token-replacement so callers
+        can bake notebook/workspace/lakehouse IDs into a template at
+        deploy time.
+    .PARAMETER Replacements
+        Hashtable of literal token -> value pairs applied to the JSON
+        text before upload. Use with placeholder tokens like
+        __WEATHER_NOTEBOOK_ID__ in the source file.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$DefinitionPath,
+        [hashtable]$Replacements
+    )
+    if (-not (Test-Path $DefinitionPath)) {
+        throw "Pipeline definition file not found: $DefinitionPath"
+    }
+    $json = Get-Content -Raw -Path $DefinitionPath
+    if ($Replacements) {
+        foreach ($k in $Replacements.Keys) {
+            $json = $json.Replace($k, [string]$Replacements[$k])
+        }
+    }
+    $bytes  = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $base64 = [Convert]::ToBase64String($bytes)
+
+    $definition = @{
+        parts = @(
+            @{
+                path        = 'pipeline-content.json'
+                payload     = $base64
+                payloadType = 'InlineBase64'
+            }
+        )
+    }
+
+    $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/dataPipelines"
+    $existing = $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+
+    if ($existing) {
+        Write-Verbose "Pipeline '$Name' exists (id=$($existing.id)); updating definition."
+        $body = @{ definition = $definition }
+        $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/dataPipelines/$($existing.id)/updateDefinition" -Body $body
+        if ($r.Status -eq 202 -and $r.OperationLocation) {
+            Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "update pipeline $Name" | Out-Null
+        }
+        return $existing
+    }
+
+    $body = @{
+        displayName = $Name
+        definition  = $definition
+    }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/dataPipelines" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create pipeline $Name" | Out-Null
+        $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/dataPipelines"
+        return $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    }
+    return $r.Body
+}
+
+function Invoke-FabricDataPipeline {
+    <#
+    .SYNOPSIS
+        Triggers an on-demand pipeline run and polls until it finishes.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$PipelineId,
+        [hashtable]$Parameters,
+        [int]$TimeoutSeconds = 1800,
+        [int]$PollSeconds   = 15
+    )
+    $body = $null
+    if ($Parameters -and $Parameters.Count -gt 0) {
+        $body = @{ executionData = @{ parameters = $Parameters } }
+    }
+    $start = Invoke-FabricRest -Token $Token -Method POST `
+        -Path "/workspaces/$WorkspaceId/items/$PipelineId/jobs/instances?jobType=Pipeline" `
+        -Body $body
+    $statusUri = $start.Location
+    if (-not $statusUri) { $statusUri = $start.OperationLocation }
+    if ($start.Status -ne 202 -or -not $statusUri) {
+        throw "Pipeline run did not start as expected (status=$($start.Status))"
+    }
+    $deadline  = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $status = Invoke-FabricRest -Token $Token -Method GET -Path $statusUri
+        $s = $status.Body.status
+        if ($s -in @('Completed','Succeeded')) { return $status.Body }
+        if ($s -in @('Failed','Cancelled','Deduped')) {
+            $detail = $status.Body | ConvertTo-Json -Depth 10
+            throw "Pipeline run finished with status '$s': $detail"
+        }
+        Start-Sleep -Seconds $PollSeconds
+    }
+    throw "Pipeline run did not complete within $TimeoutSeconds seconds"
+}
+
 # -----------------------------------------------------------------------------
 # Mirrored Database (Azure SQL -> bronze lakehouse via change feed)
 # -----------------------------------------------------------------------------
@@ -732,9 +840,75 @@ function New-FabricAdlsShortcut {
     return $r.Body
 }
 
-# -----------------------------------------------------------------------------
-# Eventhouse + KQL Database (Eventstream DirectIngestion pipeline)
-# -----------------------------------------------------------------------------
+function New-FabricOneLakeShortcut {
+    <#
+    .SYNOPSIS
+        Creates a OneLake shortcut from one Fabric item (target) into another
+        item (host), typically used to project a bronze Delta table into the
+        silver_raw lakehouse without copying data.
+    .PARAMETER HostWorkspaceId
+        Workspace that owns the lakehouse where the shortcut LIVES.
+    .PARAMETER HostItemId
+        Lakehouse id where the shortcut appears.
+    .PARAMETER ShortcutPath
+        Parent path under the host lakehouse, e.g. 'Tables' or 'Tables/dbo'.
+    .PARAMETER ShortcutName
+        Folder/table name as it should appear under ShortcutPath.
+    .PARAMETER TargetWorkspaceId
+        Workspace that owns the source Delta data.
+    .PARAMETER TargetItemId
+        Source item id (lakehouse, mirrored database, KQL database, etc).
+    .PARAMETER TargetPath
+        Full path inside the target item, e.g. 'Tables/weather' or
+        'Tables/dbo/customers'.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$HostWorkspaceId,
+        [Parameter(Mandatory)] [string]$HostItemId,
+        [Parameter(Mandatory)] [string]$ShortcutPath,
+        [Parameter(Mandatory)] [string]$ShortcutName,
+        [Parameter(Mandatory)] [string]$TargetWorkspaceId,
+        [Parameter(Mandatory)] [string]$TargetItemId,
+        [Parameter(Mandatory)] [string]$TargetPath
+    )
+
+    $body = @{
+        path   = $ShortcutPath
+        name   = $ShortcutName
+        target = @{
+            oneLake = @{
+                workspaceId = $TargetWorkspaceId
+                itemId      = $TargetItemId
+                path        = $TargetPath
+            }
+        }
+    }
+
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$HostWorkspaceId/items/$HostItemId/shortcuts" -Body $body
+    return $r.Body
+}
+
+function Enable-FabricKqlTableOneLakeMirroring {
+    <#
+    .SYNOPSIS
+        Turns on per-table OneLake mirroring (one-logical-copy) on a KQL
+        table so it becomes shortcuttable as Delta. Replication lag is ~1hr.
+    .NOTES
+        Idempotent: .alter-merge produces no-op when policy already matches.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$QueryServiceUri,
+        [Parameter(Mandatory)] [string]$DatabaseName,
+        [Parameter(Mandatory)] [string]$TableName
+    )
+    $csl = ".alter-merge table ['$TableName'] policy mirroring dataformat=parquet with (IsEnabled=true)"
+    Invoke-KustoMgmt -QueryServiceUri $QueryServiceUri -DatabaseName $DatabaseName -Csl $csl | Out-Null
+}
+
+
 
 function New-FabricEventhouse {
     <#
