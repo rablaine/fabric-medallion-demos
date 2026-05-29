@@ -71,7 +71,7 @@ Write-Ok "Capacity: $($capacity.name)"
 # -----------------------------------------------------------------------------
 $fabricToken = Get-FabricToken
 if (-not $WorkspaceName) {
-    # Default convention: contoso-retail-1-bronze-<suffix>; discover by capacity
+    # Default convention: cts-rtl-1-bronze-<suffix>; discover by capacity
     $capacityGuid = Get-FabricCapacityGuidFromArmId -Token $fabricToken -CapacityName $capacity.name
     $ws = Invoke-FabricRest -Token $fabricToken -Method GET -Path "/workspaces"
     $candidate = $ws.Body.value | Where-Object { $_.capacityId -eq $capacityGuid -and $_.displayName -like '*1-bronze*' } | Select-Object -First 1
@@ -100,6 +100,20 @@ $replacements = @(
     @('storage_account   = \"\"',              "storage_account   = \`"$($storage.name)\`""),
     @('raw_container     = \"raw\"',           "raw_container     = \`"raw\`"")
 )
+
+# Clickstream backfill notebook needs the KQL DB query URI. Resolve lazily
+# (only if the placeholder is present) so we don't pay the API call cost on
+# every run.
+if ($src.Contains('kusto_cluster_uri = \"\"')) {
+    Write-Info "  resolving KQL DB queryServiceUri for backfill notebook"
+    $kqlList = (Invoke-FabricRest -Token $fabricToken -Method GET -Path "/workspaces/$($workspace.id)/kqlDatabases").Body
+    $kql = $kqlList.value | Where-Object { $_.displayName -eq 'contoso_retail_events' } | Select-Object -First 1
+    if (-not $kql) { throw "KQL DB 'contoso_retail_events' not found in workspace $($workspace.id)" }
+    $kqlDetail = (Invoke-FabricRest -Token $fabricToken -Method GET -Path "/workspaces/$($workspace.id)/kqlDatabases/$($kql.id)").Body
+    $kustoUri = $kqlDetail.properties.queryServiceUri
+    if (-not $kustoUri) { throw "queryServiceUri missing on KQL DB" }
+    $replacements += ,@('kusto_cluster_uri = \"\"', "kusto_cluster_uri = \`"$kustoUri\`"")
+}
 foreach ($r in $replacements) {
     if ($src.Contains($r[0])) {
         $src = $src.Replace($r[0], $r[1])

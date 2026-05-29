@@ -193,6 +193,38 @@ function Set-FabricWorkspaceCapacity {
 # Lakehouses
 # -----------------------------------------------------------------------------
 
+function New-FabricWarehouse {
+    <#
+    .SYNOPSIS
+        Creates a Fabric Warehouse in the given workspace. If one with the same
+        name exists, returns it. Warehouse creation is async via LRO.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [string]$Description = ''
+    )
+
+    $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/warehouses"
+    $existing = $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    if ($existing) {
+        Write-Verbose "Warehouse '$Name' already exists (id=$($existing.id)); reusing."
+        return $existing
+    }
+
+    $body = @{ displayName = $Name }
+    if ($Description) { $body.description = $Description }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/warehouses" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create warehouse $Name" | Out-Null
+        $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/warehouses"
+        return $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    }
+    return $r.Body
+}
+
 function New-FabricLakehouse {
     <#
     .SYNOPSIS

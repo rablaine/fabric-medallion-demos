@@ -40,7 +40,30 @@ Write-Host "Logging to $logPath" -ForegroundColor DarkGray
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
-function Write-Step($msg)    { Write-Host "==> $msg" -ForegroundColor Cyan }
+# Section timing: Write-Step prints elapsed time for the PREVIOUS step before
+# announcing the next one. Write-Done at the end prints the final section +
+# total runtime. Avoids needing a stopwatch to see what's slow.
+$script:__deployStart    = Get-Date
+$script:__stepStart      = $null
+$script:__stepLabel      = $null
+function Write-Step($msg) {
+    if ($script:__stepStart) {
+        $elapsed = (Get-Date) - $script:__stepStart
+        Write-Host ("    [time] {0} took {1:mm\:ss\.f}" -f $script:__stepLabel, $elapsed) -ForegroundColor DarkGray
+    }
+    Write-Host "==> $msg" -ForegroundColor Cyan
+    $script:__stepStart = Get-Date
+    $script:__stepLabel = $msg
+}
+function Write-Done {
+    if ($script:__stepStart) {
+        $elapsed = (Get-Date) - $script:__stepStart
+        Write-Host ("    [time] {0} took {1:mm\:ss\.f}" -f $script:__stepLabel, $elapsed) -ForegroundColor DarkGray
+    }
+    $total = (Get-Date) - $script:__deployStart
+    Write-Host ("    [time] TOTAL deploy runtime: {0:hh\:mm\:ss}" -f $total) -ForegroundColor Yellow
+    $script:__stepStart = $null
+}
 function Write-Info($msg)    { Write-Host "    $msg" -ForegroundColor Gray }
 function Write-Ok($msg)      { Write-Host "    [OK] $msg" -ForegroundColor Green }
 function Write-Warn2($m)     { Write-Host "    [WARN] $m" -ForegroundColor Yellow }
@@ -249,16 +272,37 @@ for ($i = 1; $i -le 12; $i++) {
 Write-Ok "Fabric capacity GUID: $capacityId"
 
 $workspaceNames = @(
-    @{ Suffix = '1-bronze'; Description = 'Contoso Retail - Bronze (raw ingest + sim)' }
+    @{ Suffix = '1-bronze'; Description = 'Contoso Retail - Bronze (raw ingest + sim)' },
+    @{ Suffix = '2-silver'; Description = 'Contoso Retail - Silver (conformed/cleansed)' },
+    @{ Suffix = '3-gold';   Description = 'Contoso Retail - Gold (star schema warehouse)' }
 )
 
+# Workspace naming: cts-rtl-<n>-<layer>-<suffix> keeps the layer visible in the
+# Fabric workspace picker (which truncates around char 18-20).
+#   cts  = contoso (brand)
+#   rtl  = retail (vertical)
+#   1/2/3 = bronze/silver/gold (sorts in medallion order)
+#   suffix = uniqueSuffix from infra so multiple deploys can co-exist
 $workspaces = @{}
-foreach ($ws in $workspaceNames) {
-    $wsName = "contoso-retail-$($ws.Suffix)-$($outputs.uniqueSuffix.value)"
-    Write-Step "Creating Fabric workspace '$wsName'"
-    $created = New-FabricWorkspace -Token $fabricToken -Name $wsName -CapacityId $capacityId -Description $ws.Description
-    $workspaces[$ws.Suffix] = $created
-    Write-Ok "  id=$($created.id)"
+# Parallel workspace creation: three independent REST POSTs that each wait on
+# Fabric's async create. Running them concurrently via ThreadJob trims ~16s
+# off the sequential loop. Each thread re-imports Fabric.ps1 because runspaces
+# don't inherit the parent's loaded functions.
+Write-Step "Creating Fabric workspaces (bronze/silver/gold in parallel)"
+$wsJobs = foreach ($ws in $workspaceNames) {
+    $wsName = "cts-rtl-$($ws.Suffix)-$($outputs.uniqueSuffix.value)"
+    Start-ThreadJob -ScriptBlock {
+        param($tok, $capId, $name, $desc, $fabricPs1)
+        . $fabricPs1
+        New-FabricWorkspace -Token $tok -Name $name -CapacityId $capId -Description $desc
+    } -ArgumentList $fabricToken, $capacityId, $wsName, $ws.Description, (Join-Path (Join-Path $PSScriptRoot 'scripts') 'Fabric.ps1') -Name "ws-$($ws.Suffix)"
+}
+$wsJobs | Wait-Job | Out-Null
+for ($i = 0; $i -lt $workspaceNames.Count; $i++) {
+    $created = Receive-Job -Job $wsJobs[$i]
+    Remove-Job -Job $wsJobs[$i]
+    $workspaces[$workspaceNames[$i].Suffix] = $created
+    Write-Ok "  $($workspaceNames[$i].Suffix): $($created.displayName) (id=$($created.id))"
 }
 
 Write-Step "Creating bronze lakehouse"
@@ -359,19 +403,198 @@ $simNb = New-FabricNotebookFromFile `
 Remove-Item $bakedSimPath -ErrorAction SilentlyContinue
 Write-Ok "  notebook id=$($simNb.id)"
 
-# SQL DB is deployed at GP_S_Gen5_8 (min 1.0) so the seed has the throughput it
-# needs out of the gate -- no pre-seed scale-up call. We scale DOWN to Gen5_4
-# (min 0.5) after the seed completes so the demo runs on the idle-cheap SKU.
-Write-Step "Running seed notebook (populates SQL + ADLS)"
-$jobResult = Invoke-FabricNotebook `
+# Upload the clickstream backfill notebook. We can't bake the KQL cluster URI
+# yet because the eventhouse is created later; the bake-and-run happens below
+# after the KQL DB exists. Uploading the unbaked source now keeps all notebook
+# uploads in one place so the workspace looks consistent in the portal.
+Write-Step "Uploading clickstream backfill notebook 01_seed_clickstream_backfill"
+$cbNbPath = Join-Path $PSScriptRoot 'fabric' 'notebooks' '01_seed_clickstream_backfill.ipynb'
+$cbNb = New-FabricNotebookFromFile `
     -Token $fabricToken `
     -WorkspaceId $workspaces['1-bronze'].id `
-    -NotebookId $seedNb.id `
-    -TimeoutSeconds 3600 `
-    -PollSeconds 20
+    -Name '01_seed_clickstream_backfill' `
+    -NotebookPath $cbNbPath
+Write-Ok "  notebook id=$($cbNb.id)"
+
+# -----------------------------------------------------------------------------
+# Real-time clickstream backbone (Eventhouse + KQL DB + Eventstream).
+# Moved AHEAD of the seed run so we can fan out three independent long ops
+# in parallel: seed notebook (~2:20), backfill notebook (~2:40), function
+# deploy (~1:30). Without this, seed was forced to be sequential before the
+# eventhouse existed, costing ~2:20 of wall-clock.
+#
+# CRITICAL: the destination table + ingestion mapping MUST be baked into the
+# KQL database definition (DatabaseSchema.kql) at CREATION time. If we create
+# the DB empty and add the table later via Kusto mgmt API, the table doesn't
+# get registered in Fabric's catalog, the auto-provisioning of the Kusto pull
+# data connection never fires, and the eventstream destination stays in
+# "Warning" forever with 0 rows ingested. See:
+# https://learn.microsoft.com/fabric/real-time-intelligence/event-streams/api-kusto-pull-destination
+# -----------------------------------------------------------------------------
+Write-Step "Creating Eventhouse 'contoso_retail_events_eh' for real-time clickstream"
+$eventhouse = New-FabricEventhouse `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -Name 'contoso_retail_events_eh' `
+    -Description 'Contoso retail real-time event store'
+Write-Ok "  eventhouse id=$($eventhouse.id)"
+
+Write-Step "Creating KQL database 'contoso_retail_events' (with Clickstream table + mapping baked in)"
+$schemaKql = @'
+.create-merge table Clickstream (
+    event_id: string,
+    event_ts: datetime,
+    event_type: string,
+    customer_id: long,
+    product_id: long,
+    session_id: string,
+    device: string,
+    channel: string,
+    page_url: string
+)
+
+.create-or-alter table Clickstream ingestion json mapping 'clickstream_json_map'
+```
+[
+    {"column":"event_id","Properties":{"Path":"$.event_id"}},
+    {"column":"event_ts","Properties":{"Path":"$.event_ts"}},
+    {"column":"event_type","Properties":{"Path":"$.event_type"}},
+    {"column":"customer_id","Properties":{"Path":"$.customer_id"}},
+    {"column":"product_id","Properties":{"Path":"$.product_id"}},
+    {"column":"session_id","Properties":{"Path":"$.session_id"}},
+    {"column":"device","Properties":{"Path":"$.device"}},
+    {"column":"channel","Properties":{"Path":"$.channel"}},
+    {"column":"page_url","Properties":{"Path":"$.page_url"}}
+]
+```
+'@
+$kqldb = New-FabricKqlDatabaseWithSchema `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -Name 'contoso_retail_events' `
+    -EventhouseItemId $eventhouse.id `
+    -SchemaKql $schemaKql `
+    -Description 'Clickstream events landing zone'
+$kustoUri = $kqldb.properties.queryServiceUri
+if (-not $kustoUri) { throw "KQL DB queryServiceUri not returned" }
+Write-Ok "  kqldb id=$($kqldb.id) uri=$kustoUri"
+
+Write-Step "Granting workspace identity Ingestor+Viewer on KQL database"
+Grant-FabricKqlDatabaseWorkspaceIdentityAccess `
+    -QueryServiceUri $kustoUri `
+    -DatabaseName 'contoso_retail_events' `
+    -WorkspaceIdentityAppId $wsIdentity.applicationId `
+    -TenantId $selectedSub.tenantId
+Write-Ok "  workspace identity granted ingestor+viewer"
+
+Write-Step "Baking Kusto cluster URI into 01_seed_clickstream_backfill and re-uploading"
+$cbBaked = (Get-Content -Raw -Path $cbNbPath).Replace(
+    'kusto_cluster_uri = \"\"',
+    "kusto_cluster_uri = \`"$kustoUri\`""
+)
+$cbBakedPath = Join-Path ([System.IO.Path]::GetTempPath()) "01_seed_clickstream_backfill.baked.$([guid]::NewGuid()).ipynb"
+Set-Content -Path $cbBakedPath -Value $cbBaked -NoNewline -Encoding utf8
+$cbNb = New-FabricNotebookFromFile `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -Name '01_seed_clickstream_backfill' `
+    -NotebookPath $cbBakedPath
+Remove-Item $cbBakedPath -ErrorAction SilentlyContinue
+Write-Ok "  baked notebook id=$($cbNb.id)"
+
+Write-Step "Creating Eventstream 'clickstream_es' (CustomEndpoint -> Eventhouse DirectIngestion)"
+$es = New-FabricEventstreamWithEventhouseDest `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -Name 'clickstream_es' `
+    -KqlDatabaseItemId $kqldb.id `
+    -TableName 'Clickstream' `
+    -MappingRuleName 'clickstream_json_map' `
+    -Description 'Clickstream ingestion stream'
+Write-Ok "  eventstream id=$($es.eventstreamId) source=$($es.sourceName) dest=$($es.connectionName)"
+
+Write-Step "Fetching CustomEndpoint source SAS connection string"
+$eventstreamConnStr = Get-FabricEventstreamSourceConnectionString `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['1-bronze'].id `
+    -EventstreamId $es.eventstreamId `
+    -SourceId $es.sourceId
+Write-Ok "  source conn string retrieved ($($eventstreamConnStr.Length) chars)"
+
+# -----------------------------------------------------------------------------
+# 3-way parallel: seed notebook || backfill notebook || function deploy.
+# SQL DB is at GP_S_Gen5_8 (min 1.0) so seed has burst headroom; scale-down
+# runs --no-wait AFTER seed finishes. Backfill writes into the KQL DB created
+# above. Function deploy is independent of both.
+# Critical path now = max(seed, backfill) + SQL mirror tail (~20s) instead of
+# seed + backfill + func sequential.
+# -----------------------------------------------------------------------------
+$fabricPs1Path = Join-Path (Join-Path $PSScriptRoot 'scripts') 'Fabric.ps1'
+
+Write-Step "Starting seed notebook in background"
+$seedJob = Start-ThreadJob -Name 'seed-nb' -ScriptBlock {
+    param($tok, $wsId, $nbId, $fabricPs1)
+    . $fabricPs1
+    Invoke-FabricNotebook -Token $tok -WorkspaceId $wsId -NotebookId $nbId -TimeoutSeconds 3600 -PollSeconds 20
+} -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $seedNb.id, $fabricPs1Path
+Write-Ok "  seed job started"
+
+Write-Step "Starting clickstream backfill notebook in background (~2M events into KQL)"
+$cbJob = Start-ThreadJob -Name 'backfill-nb' -ScriptBlock {
+    param($tok, $wsId, $nbId, $fabricPs1)
+    . $fabricPs1
+    Invoke-FabricNotebook -Token $tok -WorkspaceId $wsId -NotebookId $nbId -TimeoutSeconds 1800 -PollSeconds 20
+} -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $cbNb.id, $fabricPs1Path
+Write-Ok "  backfill job started"
+
+Write-Step "Starting Function App deploy in background (OneDeploy, AAD auth)"
+$funcSrc  = Join-Path $PSScriptRoot 'functions\clickstream_emitter'
+$funcZip  = Join-Path $env:TEMP "clickstream_emitter_$([guid]::NewGuid().ToString('N')).zip"
+if (Test-Path $funcZip) { Remove-Item $funcZip -Force }
+Compress-Archive -Path (Join-Path $funcSrc '*') -DestinationPath $funcZip -Force
+Write-Info "  zipped -> $funcZip"
+
+$funcAppName = $outputs.functionAppName.value
+$funcJob = Start-ThreadJob -Name 'func-deploy' -ScriptBlock {
+    param($funcAppName, $funcZip)
+    $tok = az account get-access-token --resource https://management.azure.com --query accessToken -o tsv
+    if (-not $tok) { throw "Failed to get ARM token for OneDeploy" }
+    $publishUri = "https://$funcAppName.scm.azurewebsites.net/api/publish?type=zip&RemoteBuild=true&Deployer=deploy.ps1"
+    $deployResp = Invoke-WebRequest -Uri $publishUri `
+        -Method POST `
+        -Headers @{ Authorization = "Bearer $tok" } `
+        -InFile $funcZip `
+        -ContentType 'application/zip' `
+        -TimeoutSec 300 `
+        -UseBasicParsing
+    $statusUri = $deployResp.Headers.Location
+    if ($statusUri -is [array]) { $statusUri = $statusUri[0] }
+    if (-not $statusUri) { throw "OneDeploy did not return a Location header" }
+    $deadline = (Get-Date).AddMinutes(10)
+    do {
+        Start-Sleep -Seconds 10
+        try { $st = Invoke-RestMethod -Uri $statusUri -Headers @{ Authorization = "Bearer $tok" } -TimeoutSec 60 }
+        catch { Write-Output "    poll error: $($_.Exception.Message)"; continue }
+        Write-Output ("    status={0} complete={1}" -f $st.status, $st.complete)
+    } while (-not $st.complete -and (Get-Date) -lt $deadline)
+    if (-not $st.complete) { throw "Function deploy timed out after 10 min" }
+    if ($st.status -ne 4)  { throw "Function deploy failed (status=$($st.status), see $($st.log_url))" }
+    "OK"
+} -ArgumentList $funcAppName, $funcZip
+Write-Ok "  function deploy job started"
+
+Write-Step "Waiting for seed notebook to finish (SQL mirror needs initial data)"
+$seedJob | Wait-Job | Out-Null
+$jobResult = Receive-Job -Job $seedJob
+$seedState = $seedJob.State
+Remove-Job -Job $seedJob
+if ($seedState -ne 'Completed') { throw "Seed notebook thread job ended in state '$seedState'" }
 Write-Ok "Seed notebook completed (status=$($jobResult.status))"
 
-Write-Step "Scaling SQL DB back down to idle-cheap SKU (GP_S_Gen5_4)"
+Write-Step "Kicking off SQL DB scale-down to idle-cheap SKU (GP_S_Gen5_4) -- fire-and-forget"
+# --no-wait: Azure scales the DB asynchronously; the deploy doesn't depend on
+# the new SKU being active to continue (seed already drained the burst headroom
+# we needed at Gen5_8). Saves ~50s of wall-clock.
 az sql db update `
     --name $outputs.sqlDatabaseName.value `
     --server $outputs.sqlServerName.value `
@@ -381,9 +604,10 @@ az sql db update `
     --capacity 4 `
     --min-capacity 0.5 `
     --compute-model Serverless `
+    --no-wait `
     --output none
-if ($LASTEXITCODE -ne 0) { Write-Info "  (non-fatal) SQL scale-down failed; please scale back manually" }
-else { Write-Ok "  scaled back to GP_S_Gen5_4" }
+if ($LASTEXITCODE -ne 0) { Write-Info "  (non-fatal) SQL scale-down submit failed; please scale back manually" }
+else { Write-Ok "  scale-down submitted (will complete in background)" }
 
 # -----------------------------------------------------------------------------
 # SQL Mirror + ADLS Shortcut (AFTER seed so initial snapshot is meaningful)
@@ -505,169 +729,25 @@ $shortcut = New-FabricAdlsShortcut `
 Write-Ok "  shortcut created at Files/raw"
 
 # -----------------------------------------------------------------------------
-# Real-time clickstream pipeline (Fabric Eventhouse + Eventstream)
+# Drain the backfill notebook + function deploy thread jobs that were started
+# in parallel with the seed. By this point SQL mirror has been kicked off, so
+# we're free to wait on the other two long ops.
 # -----------------------------------------------------------------------------
-# Tenant policy `EventHub_DisableLocalAuth_Modify` forbids SAS auth on any
-# Azure Event Hubs namespace, which makes a standalone Azure EH unusable
-# from a Function that also can't use the EH client's AAD path easily.
-# Instead we stand up the entire pipeline INSIDE Fabric:
-#
-#   Function --SAS--> Eventstream (CustomEndpoint source)
-#                       |
-#                       v (DirectIngestion, Fabric-provisioned Kusto data conn)
-#                     Eventhouse / KQL Database (Clickstream table)
-#
-# The CustomEndpoint exposes a Fabric-managed EH-compatible SAS endpoint
-# that is exempt from the Azure EH SAS policy (it isn't an Azure EH).
-#
-# CRITICAL: the destination table + ingestion mapping MUST be baked into the
-# KQL database definition (DatabaseSchema.kql) at CREATION time. If we create
-# the DB empty and add the table later via Kusto mgmt API, the table doesn't
-# get registered in Fabric's catalog, the auto-provisioning of the Kusto pull
-# data connection never fires, and the eventstream destination stays in
-# "Warning" forever with 0 rows ingested. See:
-# https://learn.microsoft.com/fabric/real-time-intelligence/event-streams/api-kusto-pull-destination
-Write-Step "Creating Eventhouse 'contoso_retail_events_eh' for real-time clickstream"
-$eventhouse = New-FabricEventhouse `
-    -Token $fabricToken `
-    -WorkspaceId $workspaces['1-bronze'].id `
-    -Name 'contoso_retail_events_eh' `
-    -Description 'Contoso retail real-time event store'
-Write-Ok "  eventhouse id=$($eventhouse.id)"
+Write-Step "Waiting for clickstream backfill notebook to finish"
+$cbJob | Wait-Job | Out-Null
+$cbResult = Receive-Job -Job $cbJob
+$cbState = $cbJob.State
+Remove-Job -Job $cbJob
+if ($cbState -ne 'Completed') { throw "Clickstream backfill thread job ended in state '$cbState'" }
+Write-Ok "  backfill notebook completed (status=$($cbResult.status))"
 
-Write-Step "Creating KQL database 'contoso_retail_events' (with Clickstream table + mapping baked in)"
-$schemaKql = @'
-.create-merge table Clickstream (
-    event_id: string,
-    event_ts: datetime,
-    event_type: string,
-    customer_id: long,
-    product_id: long,
-    session_id: string,
-    device: string,
-    channel: string,
-    page_url: string
-)
-
-.create-or-alter table Clickstream ingestion json mapping 'clickstream_json_map'
-```
-[
-    {"column":"event_id","Properties":{"Path":"$.event_id"}},
-    {"column":"event_ts","Properties":{"Path":"$.event_ts"}},
-    {"column":"event_type","Properties":{"Path":"$.event_type"}},
-    {"column":"customer_id","Properties":{"Path":"$.customer_id"}},
-    {"column":"product_id","Properties":{"Path":"$.product_id"}},
-    {"column":"session_id","Properties":{"Path":"$.session_id"}},
-    {"column":"device","Properties":{"Path":"$.device"}},
-    {"column":"channel","Properties":{"Path":"$.channel"}},
-    {"column":"page_url","Properties":{"Path":"$.page_url"}}
-]
-```
-'@
-$kqldb = New-FabricKqlDatabaseWithSchema `
-    -Token $fabricToken `
-    -WorkspaceId $workspaces['1-bronze'].id `
-    -Name 'contoso_retail_events' `
-    -EventhouseItemId $eventhouse.id `
-    -SchemaKql $schemaKql `
-    -Description 'Clickstream events landing zone'
-$kustoUri = $kqldb.properties.queryServiceUri
-if (-not $kustoUri) { throw "KQL DB queryServiceUri not returned" }
-Write-Ok "  kqldb id=$($kqldb.id) uri=$kustoUri"
-
-Write-Step "Granting workspace identity Ingestor+Viewer on KQL database"
-Grant-FabricKqlDatabaseWorkspaceIdentityAccess `
-    -QueryServiceUri $kustoUri `
-    -DatabaseName 'contoso_retail_events' `
-    -WorkspaceIdentityAppId $wsIdentity.applicationId `
-    -TenantId $selectedSub.tenantId
-Write-Ok "  workspace identity granted ingestor+viewer"
-
-Write-Step "Creating Eventstream 'clickstream_es' (CustomEndpoint -> Eventhouse DirectIngestion)"
-$es = New-FabricEventstreamWithEventhouseDest `
-    -Token $fabricToken `
-    -WorkspaceId $workspaces['1-bronze'].id `
-    -Name 'clickstream_es' `
-    -KqlDatabaseItemId $kqldb.id `
-    -TableName 'Clickstream' `
-    -MappingRuleName 'clickstream_json_map' `
-    -Description 'Clickstream ingestion stream'
-Write-Ok "  eventstream id=$($es.eventstreamId) source=$($es.sourceName) dest=$($es.connectionName)"
-
-Write-Step "Fetching CustomEndpoint source SAS connection string"
-$eventstreamConnStr = Get-FabricEventstreamSourceConnectionString `
-    -Token $fabricToken `
-    -WorkspaceId $workspaces['1-bronze'].id `
-    -EventstreamId $es.eventstreamId `
-    -SourceId $es.sourceId
-Write-Ok "  source conn string retrieved ($($eventstreamConnStr.Length) chars)"
-
-# -----------------------------------------------------------------------------
-# Function App deploy (clickstream emitter)
-# -----------------------------------------------------------------------------
-# Tenant policy forbids storage account keys, so we cannot use
-# `az functionapp deployment source config-zip` (it uploads the package via
-# the storage account key). Instead we push directly to the Kudu zipdeploy
-# REST endpoint with an AAD bearer token. The deploying user was granted
-# Website Contributor on the Function App by the Bicep, which is what Kudu
-# requires for token-auth deploys.
-#
-# SCM_DO_BUILD_DURING_DEPLOYMENT + ENABLE_ORYX_BUILD are set in the Bicep,
-# so Oryx still runs server-side and pip-installs requirements.txt.
-Write-Step "Packaging + deploying clickstream Function code (OneDeploy, AAD auth)"
-$funcSrc  = Join-Path $PSScriptRoot 'functions\clickstream_emitter'
-$funcZip  = Join-Path $env:TEMP "clickstream_emitter_$([guid]::NewGuid().ToString('N')).zip"
-if (Test-Path $funcZip) { Remove-Item $funcZip -Force }
-Compress-Archive -Path (Join-Path $funcSrc '*') -DestinationPath $funcZip -Force
-Write-Info "  zipped -> $funcZip"
-
-# Flex Consumption uses OneDeploy (NOT /api/zipdeploy). The endpoint accepts
-# AAD bearer tokens directly when the caller has Website Contributor on the
-# Function App (granted by function.bicep). Tenant policy blocks shared-key
-# auth so this is the only viable deployment path.
-$tok = az account get-access-token --resource https://management.azure.com --query accessToken -o tsv
-if (-not $tok) { throw "Failed to get ARM token for OneDeploy" }
-$publishUri = "https://$($outputs.functionAppName.value).scm.azurewebsites.net/api/publish?type=zip&RemoteBuild=true&Deployer=deploy.ps1"
-
-try {
-    $deployResp = Invoke-WebRequest -Uri $publishUri `
-        -Method POST `
-        -Headers @{ Authorization = "Bearer $tok" } `
-        -InFile $funcZip `
-        -ContentType 'application/zip' `
-        -TimeoutSec 300 `
-        -UseBasicParsing
-} catch {
-    Remove-Item $funcZip -ErrorAction SilentlyContinue
-    throw "OneDeploy failed: $($_.Exception.Message)"
-}
-
-# OneDeploy returns 202 + Location header pointing at the build status URI.
-$statusUri = $deployResp.Headers.Location
-if ($statusUri -is [array]) { $statusUri = $statusUri[0] }
-if (-not $statusUri) {
-    Remove-Item $funcZip -ErrorAction SilentlyContinue
-    throw "OneDeploy did not return a Location header"
-}
-Write-Info "  build queued; polling $statusUri"
-
-$deadline = (Get-Date).AddMinutes(10)
-do {
-    Start-Sleep -Seconds 10
-    try {
-        $st = Invoke-RestMethod -Uri $statusUri -Headers @{ Authorization = "Bearer $tok" } -TimeoutSec 60
-    } catch {
-        Write-Info "    poll error (will retry): $($_.Exception.Message)"
-        continue
-    }
-    Write-Info ("    status={0} complete={1}" -f $st.status, $st.complete)
-} while (-not $st.complete -and (Get-Date) -lt $deadline)
-
+Write-Step "Waiting for Function App deploy job to finish"
+$funcJob | Wait-Job | Out-Null
+Receive-Job -Job $funcJob | ForEach-Object { Write-Info $_ }
+$funcState = $funcJob.State
+Remove-Job -Job $funcJob
 Remove-Item $funcZip -ErrorAction SilentlyContinue
-
-if (-not $st.complete) { throw "Function deploy timed out after 10 min" }
-# OneDeploy status codes: 3=Failed, 4=Success
-if ($st.status -ne 4)  { throw "Function deploy failed (status=$($st.status), see $($st.log_url))" }
+if ($funcState -ne 'Completed') { throw "Function deploy thread job ended in state '$funcState'" }
 Write-Ok "  function deployed -> https://$($outputs.functionHostname.value)"
 
 # Push the Fabric Eventstream CustomEndpoint SAS conn string into the
@@ -697,8 +777,38 @@ Write-Ok "  triggers synced"
 Write-Info "  emitter fires every 30s -> Fabric Eventstream '$($es.sourceName)' -> Eventhouse 'Clickstream' table"
 
 # -----------------------------------------------------------------------------
+# Silver + Gold scaffolding (empty containers only -- notebooks/pipelines/
+# shortcuts come in a later phase). Token may be close to expiry by now.
+# -----------------------------------------------------------------------------
+$fabricToken = Get-FabricToken
+
+Write-Step "Creating silver lakehouse 'contoso_retail_silver_raw' (shortcut target)"
+$silverRawLh = New-FabricLakehouse `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['2-silver'].id `
+    -Name 'contoso_retail_silver_raw'
+Write-Ok "  id=$($silverRawLh.id)"
+
+Write-Step "Creating silver lakehouse 'contoso_retail_silver_curated' (notebook write target)"
+$silverCuratedLh = New-FabricLakehouse `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['2-silver'].id `
+    -Name 'contoso_retail_silver_curated'
+Write-Ok "  id=$($silverCuratedLh.id)"
+
+Write-Step "Creating gold warehouse 'contoso_retail_gold' (star schema target)"
+$goldWh = New-FabricWarehouse `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['3-gold'].id `
+    -Name 'contoso_retail_gold' `
+    -Description 'Contoso Retail gold star schema (dim_* / fact_*)'
+Write-Ok "  id=$($goldWh.id)"
+
+# -----------------------------------------------------------------------------
 # Done (checkpoint 1: bronze-only, ready for manual silver/gold build-out)
 # -----------------------------------------------------------------------------
+Write-Done
+Write-Host ""
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host "  Deployment Complete" -ForegroundColor Green
@@ -716,13 +826,21 @@ Write-Host "  Containers: $($outputs.rawContainer.value), $($outputs.curatedCont
 Write-Host ""
 Write-Host "Fabric workspaces (capacity '$($outputs.fabricCapacityName.value)'):" -ForegroundColor Yellow
 Write-Host "  Bronze: $($workspaces['1-bronze'].displayName)   (id=$($workspaces['1-bronze'].id))"
-Write-Host "  (silver + gold workspaces come in the next build phase)"
+Write-Host "  Silver: $($workspaces['2-silver'].displayName)   (id=$($workspaces['2-silver'].id))"
+Write-Host "  Gold:   $($workspaces['3-gold'].displayName)     (id=$($workspaces['3-gold'].id))"
 Write-Host ""
 Write-Host "Bronze workspace contents:" -ForegroundColor Yellow
 Write-Host "  Lakehouse:        contoso_retail_bronze"
 Write-Host "  Seed notebook:    00_seed_historical_data (already executed)"
 Write-Host "  Mirrored DB:      contoso_retail_sql_mirror (initial snapshot in progress)"
 Write-Host "  Shortcut:         Files/raw -> $($outputs.storageAccount.value)/raw"
+Write-Host ""
+Write-Host "Silver workspace contents:" -ForegroundColor Yellow
+Write-Host "  Lakehouse (raw):     contoso_retail_silver_raw      (shortcut target -- empty)"
+Write-Host "  Lakehouse (curated): contoso_retail_silver_curated  (notebook write target -- empty)"
+Write-Host ""
+Write-Host "Gold workspace contents:" -ForegroundColor Yellow
+Write-Host "  Warehouse:        contoso_retail_gold              (empty -- star schema TBD)"
 Write-Host ""
 Write-Host "Streaming source:" -ForegroundColor Yellow
 Write-Host "  Eventhouse:       contoso_retail_events_eh"
