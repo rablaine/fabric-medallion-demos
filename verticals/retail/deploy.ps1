@@ -230,7 +230,19 @@ if (`$Workspaces.Count -gt 0) {
 }
 
 Write-Host 'Deleting resource group (async)...' -ForegroundColor Cyan
-az group delete --name `$ResourceGroup --yes --no-wait
+# Capture stdout+stderr so submit failures (RG locked, permission denied,
+# subscription disabled) actually surface instead of vanishing past --no-wait.
+`$rgDelOutput = az group delete --name `$ResourceGroup --yes --no-wait 2>&1
+if (`$LASTEXITCODE -ne 0) {
+    Write-Host ''
+    Write-Host 'Resource group delete submit FAILED. az CLI output:' -ForegroundColor Red
+    Write-Host '----------------------------------------' -ForegroundColor Red
+    `$rgDelOutput | ForEach-Object { Write-Host `$_ -ForegroundColor Red }
+    Write-Host '----------------------------------------' -ForegroundColor Red
+    Write-Host 'Resource group was NOT deleted. Investigate the error above and re-run teardown.' -ForegroundColor Yellow
+    Read-Host 'Press Enter to exit'
+    exit 1
+}
 
 Write-Host ''
 Write-Host 'Teardown initiated. Resource group deletion runs in the background.' -ForegroundColor Green
@@ -390,7 +402,11 @@ if (-not (Test-Path $bicepPath)) {
 
 $deploymentName = "contoso-retail-$(Get-Date -Format 'yyyyMMddHHmmss')"
 
-$deployJson = az deployment group create `
+# Capture stdout AND stderr so we can surface the real error to the user.
+# Without 2>&1 the az error JSON goes to stderr and gets swallowed when stdout
+# is assigned to a variable; user just sees "Bicep deployment failed (exit 1)"
+# with no clue what actually failed.
+$deployOutput = az deployment group create `
     --name $deploymentName `
     --resource-group $config.RESOURCE_GROUP `
     --template-file $bicepPath `
@@ -400,11 +416,26 @@ $deployJson = az deployment group create `
         sqlAdminObjectId=$sqlAdminObjectId `
         sqlAdminLoginName=$sqlAdminLoginName `
         clientIpAddress=$clientIp `
-    --output json
+    --output json 2>&1
 
 if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "Bicep deployment failed. az CLI output:" -ForegroundColor Red
+    Write-Host "----------------------------------------" -ForegroundColor Red
+    $deployOutput | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+    Write-Host "----------------------------------------" -ForegroundColor Red
+    # Try to surface deployment operation errors from ARM (often more specific
+    # than the az error -- e.g. "Subscription not registered for region X").
+    Write-Host "Fetching deployment operation errors from ARM..." -ForegroundColor Yellow
+    az deployment operation group list `
+        --resource-group $config.RESOURCE_GROUP `
+        --name $deploymentName `
+        --query "[?properties.provisioningState=='Failed'].{Resource:properties.targetResource.resourceName, Type:properties.targetResource.resourceType, Code:properties.statusMessage.error.code, Message:properties.statusMessage.error.message}" `
+        --output table 2>&1 | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
     throw "Bicep deployment failed (exit $LASTEXITCODE)"
 }
+
+$deployJson = $deployOutput | Out-String
 
 $deploy = $deployJson | ConvertFrom-Json
 $outputs = $deploy.properties.outputs
@@ -514,18 +545,22 @@ Write-Info "  Entra display name: $($wsIdentity.displayName) (propagating during
 
 # Grant the workspace identity Storage Blob Data Reader on the storage account
 # so the ADLS shortcut connection can read raw/. RBAC propagation also overlaps
-# the seed run.
-Write-Step "Granting workspace identity 'Storage Blob Data Reader' on storage account"
+# the seed run. Fire as ThreadJob -- the submit takes ~18s round-trip and
+# nothing between here and ADLS shortcut create needs the role.
+Write-Step "Granting workspace identity 'Storage Blob Data Reader' on storage account (background)"
 $storageId = az storage account show --name $outputs.storageAccount.value --resource-group $config.RESOURCE_GROUP --query id -o tsv
 if ($LASTEXITCODE -ne 0 -or -not $storageId) { throw "Failed to resolve storage account resource id" }
-az role assignment create `
-    --assignee-object-id $wsIdentity.servicePrincipalId `
-    --assignee-principal-type ServicePrincipal `
-    --role 'Storage Blob Data Reader' `
-    --scope $storageId `
-    --output none 2>&1 | Out-Null
-# Ignore "already exists" (exit 0 on success, non-zero with RoleAssignmentExists is fine too)
-Write-Ok "  role assignment requested (propagating during seed run)"
+$blobReaderJob = Start-ThreadJob -Name 'storage-blob-reader-grant' -ScriptBlock {
+    param($spId, $scope)
+    az role assignment create `
+        --assignee-object-id $spId `
+        --assignee-principal-type ServicePrincipal `
+        --role 'Storage Blob Data Reader' `
+        --scope $scope `
+        --output none 2>&1 | Out-Null
+    "OK"
+} -ArgumentList $wsIdentity.servicePrincipalId, $storageId
+Write-Ok "  grant job started (propagating during downstream work)"
 
 # -----------------------------------------------------------------------------
 # Pre-seed SQL+Fabric mirror prep. Done BEFORE the seed (rather than after)
@@ -953,6 +988,13 @@ $mirrorJob = Start-ThreadJob -Name 'mirror-create' -ScriptBlock {
 Write-Ok "  mirror create job started"
 
 Write-Step "Creating ADLS shortcut from bronze lakehouse Files/raw -> $($outputs.storageAccount.value)/raw"
+# Make sure the Storage Blob Data Reader grant submit completed (RBAC plane
+# write -- distinct from propagation, which we've been overlapping with seed).
+$blobReaderJob | Wait-Job | Out-Null
+Receive-Job -Job $blobReaderJob | Out-Null
+$blobReaderState = $blobReaderJob.State
+Remove-Job -Job $blobReaderJob
+if ($blobReaderState -ne 'Completed') { throw "Storage Blob Data Reader grant job ended in state '$blobReaderState'" }
 $adlsConn = New-FabricAdlsGen2Connection `
     -Token $fabricToken `
     -DisplayName "contoso_retail_adls ($($outputs.storageAccount.value))" `
@@ -1030,6 +1072,22 @@ $silverRawLh = New-FabricLakehouse `
     -WorkspaceId $workspaces['2-silver'].id `
     -Name 'contoso_retail_silver_raw'
 Write-Ok "  id=$($silverRawLh.id)"
+
+# Kick off the other two silver/gold scaffolding items in parallel; both are
+# independent of the mirror, shortcuts, and each other. They land while we
+# wait on mirror polling (~1:46) + create shortcuts. Joined before banner.
+Write-Step "Starting silver_curated lakehouse + gold warehouse creates in background"
+$silverCuratedJob = Start-ThreadJob -Name 'silver-curated-lh' -ScriptBlock {
+    param($tok, $wsId, $fabricPs1)
+    . $fabricPs1
+    New-FabricLakehouse -Token $tok -WorkspaceId $wsId -Name 'contoso_retail_silver_curated'
+} -ArgumentList $fabricToken, $workspaces['2-silver'].id, $fabricPs1Path
+$goldWhJob = Start-ThreadJob -Name 'gold-wh' -ScriptBlock {
+    param($tok, $wsId, $fabricPs1)
+    . $fabricPs1
+    New-FabricWarehouse -Token $tok -WorkspaceId $wsId -Name 'contoso_retail_gold' -Description 'Contoso Retail gold star schema (dim_* / fact_*)'
+} -ArgumentList $fabricToken, $workspaces['3-gold'].id, $fabricPs1Path
+Write-Ok "  silver_curated + gold jobs started"
 
 # silver_raw shortcuts: pure-passthrough views of the bronze-side sources so
 # silver notebooks can read everything from one schema-qualified namespace
@@ -1135,19 +1193,20 @@ foreach ($s in $silverShortcuts) {
     Write-Ok "  dbo.$($s.name) -> $($s.targetPath)"
 }
 
-Write-Step "Creating silver lakehouse 'contoso_retail_silver_curated' (notebook write target)"
-$silverCuratedLh = New-FabricLakehouse `
-    -Token $fabricToken `
-    -WorkspaceId $workspaces['2-silver'].id `
-    -Name 'contoso_retail_silver_curated'
+Write-Step "Waiting for silver_curated lakehouse create to finish"
+$silverCuratedJob | Wait-Job | Out-Null
+$silverCuratedLh = Receive-Job -Job $silverCuratedJob
+$silverCuratedState = $silverCuratedJob.State
+Remove-Job -Job $silverCuratedJob
+if ($silverCuratedState -ne 'Completed' -or -not $silverCuratedLh) { throw "silver_curated lakehouse job ended in state '$silverCuratedState'" }
 Write-Ok "  id=$($silverCuratedLh.id)"
 
-Write-Step "Creating gold warehouse 'contoso_retail_gold' (star schema target)"
-$goldWh = New-FabricWarehouse `
-    -Token $fabricToken `
-    -WorkspaceId $workspaces['3-gold'].id `
-    -Name 'contoso_retail_gold' `
-    -Description 'Contoso Retail gold star schema (dim_* / fact_*)'
+Write-Step "Waiting for gold warehouse create to finish"
+$goldWhJob | Wait-Job | Out-Null
+$goldWh = Receive-Job -Job $goldWhJob
+$goldWhState = $goldWhJob.State
+Remove-Job -Job $goldWhJob
+if ($goldWhState -ne 'Completed' -or -not $goldWh) { throw "gold warehouse job ended in state '$goldWhState'" }
 Write-Ok "  id=$($goldWh.id)"
 
 # -----------------------------------------------------------------------------

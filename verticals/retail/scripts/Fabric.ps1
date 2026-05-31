@@ -364,7 +364,11 @@ function Invoke-FabricNotebook {
         [Parameter(Mandatory)] [string]$NotebookId,
         [hashtable]$Parameters,
         [int]$TimeoutSeconds = 3600,
-        [int]$PollSeconds   = 15
+        [int]$PollSeconds   = 15,
+        # Auto-retry transient Fabric Spark cluster allocation failures
+        # (CLUSTER_CREATION_TIMED_OUT, cluster Cancelled before Ready, etc.).
+        # These happen capacity-side and unblock on a fresh submit.
+        [int]$ClusterRetries = 2
     )
 
     $body = $null
@@ -376,31 +380,62 @@ function Invoke-FabricNotebook {
         }
     }
 
-    $r = Invoke-FabricRest -Token $Token -Method POST `
-        -Path "/workspaces/$WorkspaceId/items/$NotebookId/jobs/instances?jobType=RunNotebook" `
-        -Body $body
-
-    # Job creation returns 202 + Location header pointing at the job instance.
-    if (-not $r.OperationLocation) {
-        throw "Notebook run did not return an operation location (status=$($r.Status))"
-    }
-
-    Write-Verbose "Polling notebook job at $($r.OperationLocation)"
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $attempt = 0
+    $tok = $Token
     while ($true) {
-        if ((Get-Date) -gt $deadline) {
-            throw "Notebook run timed out after $TimeoutSeconds s"
+        $attempt++
+        $r = Invoke-FabricRest -Token $tok -Method POST `
+            -Path "/workspaces/$WorkspaceId/items/$NotebookId/jobs/instances?jobType=RunNotebook" `
+            -Body $body
+
+        if (-not $r.OperationLocation) {
+            throw "Notebook run did not return an operation location (status=$($r.Status))"
         }
-        $status = Invoke-FabricRest -Token $Token -Method GET -Path $r.OperationLocation
-        $s = $status.Body.status
-        if ($s -in @('Completed','Succeeded')) {
-            return $status.Body
+
+        Write-Verbose "Polling notebook job at $($r.OperationLocation) (attempt $attempt)"
+        $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+        $terminal = $null
+        while ($true) {
+            if ((Get-Date) -gt $deadline) {
+                throw "Notebook run timed out after $TimeoutSeconds s"
+            }
+            try {
+                $status = Invoke-FabricRest -Token $tok -Method GET -Path $r.OperationLocation
+            } catch {
+                # Fabric tokens are ~1h. Long Spark waits (cluster-starved
+                # capacity, big notebooks) blow past that. Refresh on
+                # TokenExpired / 401 and keep polling -- the job itself is
+                # still running server-side.
+                if ($_.Exception.Message -match 'TokenExpired|401 \(Unauthorized\)') {
+                    Write-Warning "Fabric token expired during notebook poll; refreshing and retrying"
+                    $tok = Get-FabricToken
+                    Start-Sleep -Seconds 2
+                    continue
+                }
+                throw
+            }
+            $s = $status.Body.status
+            if ($s -in @('Completed','Succeeded')) {
+                return $status.Body
+            }
+            if ($s -in @('Failed','Cancelled','Deduped')) {
+                $terminal = $status.Body
+                break
+            }
+            Start-Sleep -Seconds $PollSeconds
         }
-        if ($s -in @('Failed','Cancelled','Deduped')) {
-            $detail = $status.Body | ConvertTo-Json -Depth 10
-            throw "Notebook run finished with status '$s': $detail"
+
+        $errCode = $terminal.failureReason.errorCode
+        $errMsg  = [string]$terminal.failureReason.message
+        $transient = ($errCode -eq 'CLUSTER_CREATION_TIMED_OUT') -or `
+                     ($errMsg -match 'Cluster was in terminal state=\[Cancelled\] before it reached ''Ready''')
+        if ($transient -and $attempt -le $ClusterRetries) {
+            Write-Warning "Notebook run hit transient Spark cluster allocation failure ($errCode); retrying ($attempt/$ClusterRetries)"
+            Start-Sleep -Seconds 30
+            continue
         }
-        Start-Sleep -Seconds $PollSeconds
+        $detail = $terminal | ConvertTo-Json -Depth 10
+        throw "Notebook run finished with status '$($terminal.status)': $detail"
     }
 }
 
