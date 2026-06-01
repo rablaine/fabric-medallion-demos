@@ -1,8 +1,10 @@
 {
   "properties": {
+    "description": "Bronze: incremental backfill and catchup of public weather data (Open-Meteo) for every store in retail.stores, written to the contoso_retail_bronze lakehouse as dbo.weather. Idempotent merge on (date, store_id). Trigger on a daily schedule for ongoing catchup, or via pl_bronze_initial_load for a first-time full backfill.",
     "activities": [
       {
         "name": "Run ingest_weather",
+        "description": "Executes the ingest_weather notebook on the bronze Spark pool. The notebook reads the store list, calls the Open-Meteo REST API for each store's lat/long, and merges the resulting daily weather rows into the bronze lakehouse. Safe to re-run: merge on (date, store_id) handles overlapping windows and gives this pipeline its at-least-once guarantee.",
         "type": "TridentNotebook",
         "dependsOn": [],
         "policy": {

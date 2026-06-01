@@ -1,0 +1,46 @@
+{
+  "properties": {
+    "description": "Top-level medallion orchestrator for a full (cold-start) initial load. Runs pl_bronze_initial_load, waits for it to finish, then runs pl_silver_initial_load. Both child pipelines live in the bronze workspace alongside this one (silver-promotion notebooks live in the silver workspace; only the pipelines move here). A pl_gold_initial_load stage will be added as a third ExecutePipeline activity once the gold layer is built.",
+    "activities": [
+      {
+        "name": "Bronze initial load",
+        "description": "Runs pl_bronze_initial_load (weather backfill today, additional bronze ingest siblings later). waitOnCompletion=true so silver doesn't start until bronze data is fully landed.",
+        "type": "ExecutePipeline",
+        "dependsOn": [],
+        "policy": {
+          "secureInput": false
+        },
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "__BRONZE_INITIAL_LOAD_PIPELINE_ID__",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {}
+        }
+      },
+      {
+        "name": "Silver initial load",
+        "description": "Runs pl_silver_initial_load (also in bronze workspace), which fans out the three silver_curated_* notebooks living in the silver workspace.",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          {
+            "activity": "Bronze initial load",
+            "dependencyConditions": [ "Succeeded" ]
+          }
+        ],
+        "policy": {
+          "secureInput": false
+        },
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "__SILVER_INITIAL_LOAD_PIPELINE_ID__",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {}
+        }
+      }
+    ]
+  }
+}

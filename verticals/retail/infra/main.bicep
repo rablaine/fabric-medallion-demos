@@ -52,7 +52,6 @@ var suffix         = uniqueString(resourceGroup().id)
 var sqlServer      = toLower('${resourcePrefix}-retail-sql-${substring(suffix, 0, 6)}')
 var sqlDb          = 'contoso_retail'
 var storageAcc     = toLower('${resourcePrefix}rt${substring(suffix, 0, 8)}') // storage = 3-24 lowercase alphanumeric
-var fabricCapacity = toLower('${resourcePrefix}retail${substring(suffix, 0, 8)}') // capacity name = lowercase alnum, globally unique in Fabric tenant
 var funcAppName    = toLower('${resourcePrefix}-retail-emit-${substring(suffix, 0, 6)}') // *.azurewebsites.net global unique
 var funcStorageAcc = toLower('${resourcePrefix}rtfn${substring(suffix, 0, 8)}')          // dedicated storage for the Function runtime
 var funcPlanName   = toLower('${resourcePrefix}-retail-funcplan-${substring(suffix, 0, 6)}')
@@ -91,17 +90,10 @@ module sql 'modules/sql.bicep' = {
 }
 
 // -----------------------------------------------------------------------------
-// Fabric F2 capacity
+// Fabric capacity is deployed separately by fabric-capacity.bicep BEFORE this
+// template runs, so Fabric workspaces + workspace identity + tenant-setting
+// grants can propagate in parallel with the storage/sql/function deploy.
 // -----------------------------------------------------------------------------
-module fabric 'modules/fabric.bicep' = {
-  name: 'fabric-deploy'
-  params: {
-    name: fabricCapacity
-    location: location
-    adminUserPrincipalName: sqlAdminLoginName
-    tags: tags
-  }
-}
 
 // -----------------------------------------------------------------------------
 // Function App (clickstream emitter, Linux Flex Consumption)
@@ -134,8 +126,6 @@ output storageAccount     string = storage.outputs.storageAccountName
 output storageDfsEndpoint string = storage.outputs.dfsEndpoint
 output rawContainer       string = storage.outputs.rawContainerName
 output curatedContainer   string = storage.outputs.curatedContainerName
-output fabricCapacityId   string = fabric.outputs.capacityId
-output fabricCapacityName string = fabric.outputs.capacityName
 output uniqueSuffix       string = substring(suffix, 0, 8)
 output functionAppName    string = funcApp.outputs.appName
 output functionHostname   string = funcApp.outputs.defaultHostname
