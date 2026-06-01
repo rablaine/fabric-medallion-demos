@@ -1,0 +1,25 @@
+{
+  "properties": {
+    "description": "Bronze orchestrator. Runs every full-load ingest pipeline the bronze layer needs from a cold start: today that means weather backfill (mirrored SQL + clickstream eventstream are already live and don't need a kick). Designed to be the single 'first run' entry point and to grow new child ExecutePipeline activities as more sources arrive.",
+    "activities": [
+      {
+        "name": "Weather backfill and catchup",
+        "description": "Runs pl_bronze_weather_ingest, which calls Open-Meteo for every store's lat/long and merges the daily weather rows into contoso_retail_bronze.dbo.weather. waitOnCompletion=true so this orchestrator only finishes once weather is loaded; a future deploy can fan out additional sibling activities here in parallel.",
+        "type": "ExecutePipeline",
+        "dependsOn": [],
+        "policy": {
+          "secureInput": false
+        },
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "__WEATHER_PIPELINE_ID__",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {},
+          "workspaceId": "__BRONZE_WORKSPACE_ID__"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "properties": {
+    "description": "Silver incremental load. Same structure as pl_silver_initial_load -- the three silver_curated_* notebooks are idempotent (overwrite or merge-on-key) so re-running is the incremental path.",
+    "activities": [
+      {
+        "name": "silver_curated_retail",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.02:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "__SILVER_RETAIL_NOTEBOOK_ID__",
+          "workspaceId": "__SILVER_WORKSPACE_ID__"
+        }
+      },
+      {
+        "name": "silver_curated_weather",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.02:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "__SILVER_WEATHER_NOTEBOOK_ID__",
+          "workspaceId": "__SILVER_WORKSPACE_ID__"
+        }
+      },
+      {
+        "name": "silver_curated_clickstream",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.02:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "__SILVER_CLICKSTREAM_NOTEBOOK_ID__",
+          "workspaceId": "__SILVER_WORKSPACE_ID__"
+        }
+      }
+    ]
+  }
+}

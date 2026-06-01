@@ -1,0 +1,58 @@
+{
+  "properties": {
+    "description": "Silver orchestrator. Runs the silver_curated_* notebooks that take shortcut + mirrored + streaming data from bronze (via silver_raw) and write normalized, enriched, analyst-ready tables into the silver_curated lakehouse under Tables/dbo. All three notebooks are independent of each other (no shared writes) so they fan out in parallel; this pipeline completes only when all three succeed.",
+    "activities": [
+      {
+        "name": "silver_curated_retail",
+        "description": "Runs silver_curated_retail: joins customers, products, orders, order_items, stores, categories, brands, customer_segments and weather into the four core normalized tables (customer, product, order, order_line) with cross-source enrichment (lifecycle status, basket size, weather-at-order, etc.).",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.02:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "__SILVER_RETAIL_NOTEBOOK_ID__",
+          "workspaceId": "__SILVER_WORKSPACE_ID__"
+        }
+      },
+      {
+        "name": "silver_curated_weather",
+        "description": "Runs silver_curated_weather: derives the weather_daily table (with is_rainy / is_snowy / is_hot / is_cold flags) from the bronze weather shortcut so analysts have a clean per-store-per-day weather dimension.",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.02:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "__SILVER_WEATHER_NOTEBOOK_ID__",
+          "workspaceId": "__SILVER_WORKSPACE_ID__"
+        }
+      },
+      {
+        "name": "silver_curated_clickstream",
+        "description": "Runs silver_curated_clickstream: reads the Clickstream KQL table from the Eventhouse and sessionizes it into session + session_event Delta tables (entry/exit page, duration, conversion, bounce flag, etc.) in silver_curated.",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.02:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "__SILVER_CLICKSTREAM_NOTEBOOK_ID__",
+          "workspaceId": "__SILVER_WORKSPACE_ID__"
+        }
+      }
+    ]
+  }
+}

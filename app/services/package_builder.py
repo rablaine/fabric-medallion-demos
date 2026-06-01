@@ -30,7 +30,10 @@ class PackageBuilder:
         # Items in the vertical folder that should not ship to end users.
         # `data-gen` is a dev tool for regenerating Faker data — Phase B replaces
         # it with a Fabric notebook that runs in the customer's tenant.
-        EXCLUDED = {"vertical.yaml", "data-gen"}
+        # `teardown.ps1` / `teardown.cmd` / `logs` are artifacts written by a
+        # PRIOR deploy run in the dev workspace; bundling them stamps the new
+        # package with the OLD deployment's RG name.
+        EXCLUDED = {"vertical.yaml", "data-gen", "teardown.ps1", "teardown.cmd", "logs"}
 
         # Copy vertical assets
         for item in self.root.iterdir():
