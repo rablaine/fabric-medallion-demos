@@ -1,6 +1,6 @@
 {
   "properties": {
-    "description": "Top-level medallion orchestrator for a full (cold-start) initial load. Runs pl_bronze_initial_load, waits for it to finish, then runs pl_silver_initial_load. Both child pipelines live in the bronze workspace alongside this one (silver-promotion notebooks live in the silver workspace; only the pipelines move here). A pl_gold_initial_load stage will be added as a third ExecutePipeline activity once the gold layer is built.",
+    "description": "Top-level medallion orchestrator for a full (cold-start) initial load. Runs pl_bronze_initial_load -> pl_silver_initial_load -> pl_gold_initial_load in sequence. All child pipelines live in the bronze workspace alongside this one (silver-promotion and gold-promotion notebooks live in the silver workspace; only the pipelines move here).",
     "activities": [
       {
         "name": "Bronze initial load",
@@ -35,6 +35,28 @@
         "typeProperties": {
           "pipeline": {
             "referenceName": "__SILVER_INITIAL_LOAD_PIPELINE_ID__",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {}
+        }
+      },
+      {
+        "name": "Gold initial load",
+        "description": "Runs pl_gold_initial_load (in bronze workspace), which builds the star-schema dimensions and facts in the contoso_retail_gold Warehouse via three gold_promotion notebooks in the silver workspace.",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          {
+            "activity": "Silver initial load",
+            "dependencyConditions": [ "Succeeded" ]
+          }
+        ],
+        "policy": {
+          "secureInput": false
+        },
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "__GOLD_INITIAL_LOAD_PIPELINE_ID__",
             "type": "PipelineReference"
           },
           "waitOnCompletion": true,

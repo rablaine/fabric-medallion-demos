@@ -1,6 +1,6 @@
 {
   "properties": {
-    "description": "Top-level medallion incremental orchestrator. Runs pl_bronze_incremental_load, waits for completion, then runs pl_silver_incremental_load. Both child pipelines live in the bronze workspace alongside this one.",
+    "description": "Top-level medallion incremental orchestrator. Runs pl_bronze_incremental_load -> pl_silver_incremental_load -> pl_gold_incremental_load in sequence. All child pipelines live in the bronze workspace alongside this one.",
     "activities": [
       {
         "name": "Bronze incremental",
@@ -33,6 +33,27 @@
         "typeProperties": {
           "pipeline": {
             "referenceName": "__SILVER_INCREMENTAL_LOAD_PIPELINE_ID__",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {}
+        }
+      },
+      {
+        "name": "Gold incremental",
+        "type": "ExecutePipeline",
+        "dependsOn": [
+          {
+            "activity": "Silver incremental",
+            "dependencyConditions": [ "Succeeded" ]
+          }
+        ],
+        "policy": {
+          "secureInput": false
+        },
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "__GOLD_INCREMENTAL_LOAD_PIPELINE_ID__",
             "type": "PipelineReference"
           },
           "waitOnCompletion": true,

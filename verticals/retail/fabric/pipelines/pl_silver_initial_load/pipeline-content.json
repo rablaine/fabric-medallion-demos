@@ -52,6 +52,23 @@
           "notebookId": "__SILVER_CLICKSTREAM_NOTEBOOK_ID__",
           "workspaceId": "__SILVER_WORKSPACE_ID__"
         }
+      },
+      {
+        "name": "silver_curated_hr",
+        "description": "Runs silver_curated_hr: joins mirrored dbo.employees, dbo.job_titles and dbo.stores into a single denormalized employee table with title/department/store/manager + tenure/age/salary bands.",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.02:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "__SILVER_HR_NOTEBOOK_ID__",
+          "workspaceId": "__SILVER_WORKSPACE_ID__"
+        }
       }
     ]
   }
