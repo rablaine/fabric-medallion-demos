@@ -1183,12 +1183,15 @@ $seedJob = Start-ThreadJob -Name 'seed-nb' -ScriptBlock {
 } -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $seedNb.id, $fabricPs1Path
 Write-Ok "  seed job started"
 
-Write-Step "Starting clickstream backfill notebook in background (~2M events into KQL)"
+Write-Step "Starting clickstream backfill notebook in background (~2M events into KQL; usually 3-6 min, can spike to 15-20 min on Fabric Spark cold start)"
 $cbJob = Start-ThreadJob -Name 'backfill-nb' -ScriptBlock {
     param($tok, $wsId, $nbId, $fabricPs1)
     . $fabricPs1
     Invoke-FabricNotebook -Token $tok -WorkspaceId $wsId -NotebookId $nbId -TimeoutSeconds 1800 -PollSeconds 20
 } -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $cbNb.id, $fabricPs1Path
+$cbStarted = Get-Date
+$cbNotebookId = $cbNb.id
+$cbWorkspaceId = $workspaces['1-bronze'].id
 Write-Ok "  backfill job started"
 
 Write-Step "Starting Function App deploy in background (OneDeploy, AAD auth)"
@@ -1304,12 +1307,31 @@ Write-Ok "  shortcut created at Files/raw"
 # we're free to wait on the other two long ops.
 # -----------------------------------------------------------------------------
 Write-Step "Waiting for clickstream backfill notebook to finish"
+# Heartbeat loop: prints elapsed every 30s so the user can tell the deploy is
+# alive vs. wedged. The notebook itself blocks on Spark cold-start (often) +
+# Kusto queued ingest (occasionally slow). Soft-warn at 8 min with a link to
+# the portal run. Hard ceiling is the TimeoutSeconds=1800 (30 min) inside the
+# thread job; we exit this loop when the job ends regardless.
+$cbWarnedSlow = $false
+$cbPortalUrl = "https://app.fabric.microsoft.com/groups/$cbWorkspaceId/synapsenotebooks/$cbNotebookId"
+while ($cbJob.State -eq 'Running' -or $cbJob.State -eq 'NotStarted') {
+    Start-Sleep -Seconds 30
+    $elapsed = (Get-Date) - $cbStarted
+    $mins = [int]$elapsed.TotalMinutes
+    $secs = $elapsed.Seconds
+    Write-Info ("  [waiting] {0}m{1:00}s elapsed, job state={2}" -f $mins, $secs, $cbJob.State)
+    if (-not $cbWarnedSlow -and $elapsed.TotalMinutes -ge 8) {
+        Write-Host "  [warn] backfill is running longer than usual (>8 min). This is almost always a transient Fabric Spark cold-start or KQL queued-ingest backlog -- deploy will keep waiting." -ForegroundColor Yellow
+        Write-Host ("         portal: $cbPortalUrl") -ForegroundColor Yellow
+        $cbWarnedSlow = $true
+    }
+}
 $cbJob | Wait-Job | Out-Null
 $cbResult = Receive-Job -Job $cbJob
 $cbState = $cbJob.State
 Remove-Job -Job $cbJob
-if ($cbState -ne 'Completed') { throw "Clickstream backfill thread job ended in state '$cbState'" }
-Write-Ok "  backfill notebook completed (status=$($cbResult.status))"
+if ($cbState -ne 'Completed') { throw "Clickstream backfill thread job ended in state '$cbState' after $([int]((Get-Date) - $cbStarted).TotalMinutes)m. This is almost always transient -- re-run deploy. Portal: $cbPortalUrl" }
+Write-Ok "  backfill notebook completed (status=$($cbResult.status), elapsed=$([int]((Get-Date) - $cbStarted).TotalMinutes)m$(((Get-Date) - $cbStarted).Seconds.ToString('00'))s)"
 
 Write-Step "Waiting for Function App deploy job to finish"
 $funcJob | Wait-Job | Out-Null
