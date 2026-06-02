@@ -6,6 +6,6 @@ AS
 BEGIN
     DROP TABLE IF EXISTS dbo.fact_returns;
     CREATE TABLE dbo.fact_returns AS
-    SELECT * FROM contoso_retail_silver_mirror.dbo.[return];
+    SELECT * FROM contoso_retail_silver_curated.dbo.[return];
 END
 GO

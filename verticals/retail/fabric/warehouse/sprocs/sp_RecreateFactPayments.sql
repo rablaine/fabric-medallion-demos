@@ -5,6 +5,6 @@ AS
 BEGIN
     DROP TABLE IF EXISTS dbo.fact_payments;
     CREATE TABLE dbo.fact_payments AS
-    SELECT * FROM contoso_retail_silver_mirror.dbo.payment;
+    SELECT * FROM contoso_retail_silver_curated.dbo.payment;
 END
 GO

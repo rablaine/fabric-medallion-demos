@@ -5,6 +5,6 @@ AS
 BEGIN
     DROP TABLE IF EXISTS dbo.fact_sales;
     CREATE TABLE dbo.fact_sales AS
-    SELECT * FROM contoso_retail_silver_mirror.dbo.order_line;
+    SELECT * FROM contoso_retail_silver_curated.dbo.order_line;
 END
 GO

@@ -7,6 +7,6 @@ AS
 BEGIN
     DROP TABLE IF EXISTS dbo.fact_inventory;
     CREATE TABLE dbo.fact_inventory AS
-    SELECT * FROM contoso_retail_silver_mirror.dbo.inventory;
+    SELECT * FROM contoso_retail_silver_curated.dbo.inventory;
 END
 GO

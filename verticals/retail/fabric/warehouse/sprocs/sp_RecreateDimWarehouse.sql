@@ -4,6 +4,6 @@ AS
 BEGIN
     DROP TABLE IF EXISTS dbo.dim_warehouse;
     CREATE TABLE dbo.dim_warehouse AS
-    SELECT * FROM contoso_retail_silver_mirror.dbo.warehouse;
+    SELECT * FROM contoso_retail_silver_curated.dbo.warehouse;
 END
 GO

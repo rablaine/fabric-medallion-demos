@@ -1,6 +1,6 @@
 {
   "properties": {
-    "description": "Top-level medallion orchestrator for a full (cold-start) initial load. Runs pl_bronze_initial_load -> pl_silver_initial_load -> pl_gold_initial_load in sequence. All child pipelines live in the bronze workspace alongside this one (silver-promotion and gold-promotion notebooks live in the silver workspace; only the pipelines move here).",
+    "description": "Top-level medallion orchestrator for a full (cold-start) initial load. Runs pl_bronze_initial_load -> pl_silver_initial_load -> pl_gold_initial_load in sequence. All child pipelines live in the bronze workspace alongside this one (silver_promotion notebooks live in the silver workspace; only the pipelines move here).",
     "activities": [
       {
         "name": "Bronze initial load",

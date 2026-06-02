@@ -1,10 +1,10 @@
 {
   "properties": {
-    "description": "Gold load. All activities are SqlServerStoredProcedure calls against contoso_retail_gold (via the __WAREHOUSE_CONNECTION_ID__ Fabric connection). Stage 1: 6 dim sprocs run in parallel (no dependsOn). Stage 2: 4 fact sprocs run in parallel, each depending on the dims it joins to. Each sproc does DROP TABLE IF EXISTS + CTAS from the contoso_retail_silver_mirror lakehouse shortcut in the gold workspace, so the run is fully idempotent. Initial and incremental loads use the same definition.",
+    "description": "Gold load. All activities are SqlServerStoredProcedure calls against contoso_retail_gold (via the __WAREHOUSE_CONNECTION_ID__ Fabric connection). Stage 1: 6 dim sprocs run in parallel (no dependsOn). Stage 2: 4 fact sprocs run in parallel, each depending on the dims it joins to. Each sproc does DROP TABLE IF EXISTS + CTAS from the contoso_retail_silver_curated shortcut lakehouse in the gold workspace, so the run is fully idempotent. Initial and incremental loads use the same definition.",
     "activities": [
       {
-        "name": "Refresh silver_mirror metadata",
-        "description": "Refreshes the silver_mirror SQL analytics endpoint so the gold sprocs see current schema and data. Required because Fabric SEPs do NOT auto-discover OneLake shortcut tables or schema changes from overwriteSchema=True silver writes.",
+        "name": "Refresh silver_curated SEP",
+        "description": "Refreshes the silver_curated SQL analytics endpoint (the shortcut lakehouse in the gold workspace) so the gold sprocs see current schema and data. Required because Fabric SEPs do NOT auto-discover OneLake shortcut tables or schema changes from overwriteSchema=True silver writes.",
         "type": "TridentNotebook",
         "dependsOn": [],
         "policy": {
@@ -16,7 +16,7 @@
         },
         "typeProperties": {
           "notebookId": "__REFRESH_SEP_NOTEBOOK_ID__",
-          "workspaceId": "__GOLD_WORKSPACE_ID__"
+          "workspaceId": "__SILVER_WORKSPACE_ID__"
         }
       },
       {
@@ -24,7 +24,7 @@
         "type": "SqlServerStoredProcedure",
         "dependsOn": [
           {
-            "activity": "Refresh silver_mirror metadata",
+            "activity": "Refresh silver_curated SEP",
             "dependencyConditions": [
               "Succeeded"
             ]
@@ -50,7 +50,7 @@
         "type": "SqlServerStoredProcedure",
         "dependsOn": [
           {
-            "activity": "Refresh silver_mirror metadata",
+            "activity": "Refresh silver_curated SEP",
             "dependencyConditions": [
               "Succeeded"
             ]
@@ -76,7 +76,7 @@
         "type": "SqlServerStoredProcedure",
         "dependsOn": [
           {
-            "activity": "Refresh silver_mirror metadata",
+            "activity": "Refresh silver_curated SEP",
             "dependencyConditions": [
               "Succeeded"
             ]
@@ -102,7 +102,7 @@
         "type": "SqlServerStoredProcedure",
         "dependsOn": [
           {
-            "activity": "Refresh silver_mirror metadata",
+            "activity": "Refresh silver_curated SEP",
             "dependencyConditions": [
               "Succeeded"
             ]
@@ -128,7 +128,7 @@
         "type": "SqlServerStoredProcedure",
         "dependsOn": [
           {
-            "activity": "Refresh silver_mirror metadata",
+            "activity": "Refresh silver_curated SEP",
             "dependencyConditions": [
               "Succeeded"
             ]
@@ -154,7 +154,7 @@
         "type": "SqlServerStoredProcedure",
         "dependsOn": [
           {
-            "activity": "Refresh silver_mirror metadata",
+            "activity": "Refresh silver_curated SEP",
             "dependencyConditions": [
               "Succeeded"
             ]
@@ -179,7 +179,7 @@
         "name": "Recreate dim_supplier",
         "type": "SqlServerStoredProcedure",
         "dependsOn": [
-          { "activity": "Refresh silver_mirror metadata", "dependencyConditions": ["Succeeded"] }
+          { "activity": "Refresh silver_curated SEP", "dependencyConditions": ["Succeeded"] }
         ],
         "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
         "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateDimSupplier]", "database": "contoso_retail_gold" },
@@ -189,7 +189,7 @@
         "name": "Recreate dim_warehouse",
         "type": "SqlServerStoredProcedure",
         "dependsOn": [
-          { "activity": "Refresh silver_mirror metadata", "dependencyConditions": ["Succeeded"] }
+          { "activity": "Refresh silver_curated SEP", "dependencyConditions": ["Succeeded"] }
         ],
         "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
         "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateDimWarehouse]", "database": "contoso_retail_gold" },
@@ -199,7 +199,7 @@
         "name": "Recreate dim_promotion",
         "type": "SqlServerStoredProcedure",
         "dependsOn": [
-          { "activity": "Refresh silver_mirror metadata", "dependencyConditions": ["Succeeded"] }
+          { "activity": "Refresh silver_curated SEP", "dependencyConditions": ["Succeeded"] }
         ],
         "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
         "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateDimPromotion]", "database": "contoso_retail_gold" },
@@ -404,7 +404,7 @@
         "type": "SqlServerStoredProcedure",
         "dependsOn": [
           { "activity": "Recreate dim_date", "dependencyConditions": ["Succeeded"] },
-          { "activity": "Refresh silver_mirror metadata", "dependencyConditions": ["Succeeded"] }
+          { "activity": "Refresh silver_curated SEP", "dependencyConditions": ["Succeeded"] }
         ],
         "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
         "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateFactPayments]", "database": "contoso_retail_gold" },

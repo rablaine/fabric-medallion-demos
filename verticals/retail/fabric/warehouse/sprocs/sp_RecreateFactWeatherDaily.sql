@@ -5,6 +5,6 @@ AS
 BEGIN
     DROP TABLE IF EXISTS dbo.fact_weather_daily;
     CREATE TABLE dbo.fact_weather_daily AS
-    SELECT * FROM contoso_retail_silver_mirror.dbo.weather_daily;
+    SELECT * FROM contoso_retail_silver_curated.dbo.weather_daily;
 END
 GO

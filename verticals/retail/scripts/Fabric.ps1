@@ -63,8 +63,9 @@ function Invoke-FabricRest {
     # Retry transient transport-level / 5xx / 429 errors. Fabric occasionally
     # returns 'unexpected EOF', SSL handshake failures, or 502/503/504 when the
     # front door is under load -- these are safe to retry. 4xx (other than 429)
-    # is not retried.
-    $maxAttempts = 5
+    # is not retried. 429s honor Retry-After or the "blocked by upstream service
+    # until: <UTC timestamp>" message, which can be many minutes out.
+    $maxAttempts = 8
     $resp = $null
     $errMsg = $null
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
@@ -87,6 +88,21 @@ function Invoke-FabricRest {
                 throw "Fabric API $Method $Path failed: $errMsg"
             }
             $delay = [int][Math]::Min(30, [Math]::Pow(2, $attempt))
+            if ($respStatus -eq 429) {
+                # Prefer server-supplied Retry-After (seconds)
+                $retryAfter = $null
+                try { $retryAfter = $_.Exception.Response.Headers.RetryAfter.Delta.TotalSeconds } catch {}
+                if ($retryAfter) { $delay = [int]$retryAfter }
+                # Fall back to parsing the "blocked by upstream service until: <UTC>" hint
+                elseif ($errMsg -match 'blocked by the upstream service until:\s*([^"]+?)\s*\(UTC\)') {
+                    try {
+                        $until = [datetime]::Parse($matches[1], [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+                        $secs = [int]([Math]::Ceiling(($until - [datetime]::UtcNow).TotalSeconds))
+                        if ($secs -gt 0) { $delay = [Math]::Min(600, $secs + 2) }
+                    } catch {}
+                }
+                else { $delay = [int][Math]::Min(120, 15 * $attempt) }
+            }
             Write-Host "  Fabric API $Method $Path transient error (attempt $attempt/$maxAttempts); retrying in ${delay}s: $($_.Exception.Message)" -ForegroundColor DarkYellow
             Start-Sleep -Seconds $delay
         }
@@ -321,7 +337,8 @@ function New-FabricNotebookFromFile {
         [Parameter(Mandatory)] [string]$Token,
         [Parameter(Mandatory)] [string]$WorkspaceId,
         [Parameter(Mandatory)] [string]$Name,
-        [Parameter(Mandatory)] [string]$NotebookPath
+        [Parameter(Mandatory)] [string]$NotebookPath,
+        [string]$FolderId
     )
     if (-not (Test-Path $NotebookPath)) {
         throw "Notebook file not found: $NotebookPath"
@@ -358,6 +375,7 @@ function New-FabricNotebookFromFile {
         displayName = $Name
         definition  = $definition
     }
+    if ($FolderId) { $body.folderId = $FolderId }
     $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/notebooks" -Body $body
     if ($r.Status -eq 202 -and $r.OperationLocation) {
         Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create notebook $Name" | Out-Null
@@ -477,7 +495,8 @@ function New-FabricDataPipelineFromFile {
         [Parameter(Mandatory)] [string]$WorkspaceId,
         [Parameter(Mandatory)] [string]$Name,
         [Parameter(Mandatory)] [string]$DefinitionPath,
-        [hashtable]$Replacements
+        [hashtable]$Replacements,
+        [string]$FolderId
     )
     if (-not (Test-Path $DefinitionPath)) {
         throw "Pipeline definition file not found: $DefinitionPath"
@@ -518,6 +537,7 @@ function New-FabricDataPipelineFromFile {
         displayName = $Name
         definition  = $definition
     }
+    if ($FolderId) { $body.folderId = $FolderId }
     $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/dataPipelines" -Body $body
     if ($r.Status -eq 202 -and $r.OperationLocation) {
         Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create pipeline $Name" | Out-Null
@@ -570,6 +590,56 @@ function Invoke-FabricDataPipeline {
 # -----------------------------------------------------------------------------
 # Mirrored Database (Azure SQL -> bronze lakehouse via change feed)
 # -----------------------------------------------------------------------------
+
+function New-FabricFolder {
+    <#
+    .SYNOPSIS
+        Creates a workspace folder (or returns existing) by displayName.
+        Idempotent: a second call with the same name returns the existing id.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$DisplayName,
+        [string]$ParentFolderId
+    )
+    $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/folders"
+    $existing = $list.Body.value | Where-Object {
+        $_.displayName -eq $DisplayName -and
+        (($ParentFolderId -and $_.parentFolderId -eq $ParentFolderId) -or (-not $ParentFolderId -and -not $_.parentFolderId))
+    } | Select-Object -First 1
+    if ($existing) { return $existing }
+    $body = @{ displayName = $DisplayName }
+    if ($ParentFolderId) { $body.parentFolderId = $ParentFolderId }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/folders" -Body $body
+    return $r.Body
+}
+
+function Move-FabricItemToFolder {
+    <#
+    .SYNOPSIS
+        Moves an item into a workspace folder (or to workspace root if FolderId
+        is empty). Idempotent: re-moving to current location is a no-op server-
+        side. Swallows ItemNotFound for items that were already deleted.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$ItemId,
+        [string]$FolderId
+    )
+    $body = @{}
+    if ($FolderId) { $body.targetFolderId = $FolderId }
+    try {
+        Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/items/$ItemId/move" -Body $body | Out-Null
+    } catch {
+        $msg = "$_"
+        if ($msg -match 'ItemNotFound') { Write-Verbose "Move skipped: item $ItemId not found." ; return }
+        throw
+    }
+}
 
 function Add-FabricWorkspaceRoleAssignment {
     <#

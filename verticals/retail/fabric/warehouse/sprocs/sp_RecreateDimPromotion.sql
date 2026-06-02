@@ -4,6 +4,6 @@ AS
 BEGIN
     DROP TABLE IF EXISTS dbo.dim_promotion;
     CREATE TABLE dbo.dim_promotion AS
-    SELECT * FROM contoso_retail_silver_mirror.dbo.promotion;
+    SELECT * FROM contoso_retail_silver_curated.dbo.promotion;
 END
 GO

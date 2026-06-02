@@ -5,6 +5,6 @@ AS
 BEGIN
     DROP TABLE IF EXISTS dbo.fact_shipments;
     CREATE TABLE dbo.fact_shipments AS
-    SELECT * FROM contoso_retail_silver_mirror.dbo.shipment;
+    SELECT * FROM contoso_retail_silver_curated.dbo.shipment;
 END
 GO

@@ -1,6 +1,6 @@
 {
   "properties": {
-    "description": "Bronze incremental load. Same structure as pl_bronze_initial_load (the underlying notebooks are idempotent + merge-on-key, so re-running is the incremental path). Intended to be invoked from a daily/hourly schedule -- or from pl_full_incremental_load -- after the initial backfill is complete.",
+    "description": "Bronze incremental load. Same structure as pl_bronze_initial_load (the underlying notebooks are idempotent + merge-on-key, so re-running is the incremental path). Intended to be invoked from a daily/hourly schedule -- or from pl_incremental_load -- after the initial backfill is complete.",
     "activities": [
       {
         "name": "Weather catchup",

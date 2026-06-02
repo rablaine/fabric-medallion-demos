@@ -5,6 +5,6 @@ AS
 BEGIN
     DROP TABLE IF EXISTS dbo.fact_sessions;
     CREATE TABLE dbo.fact_sessions AS
-    SELECT * FROM contoso_retail_silver_mirror.dbo.[session];
+    SELECT * FROM contoso_retail_silver_curated.dbo.[session];
 END
 GO

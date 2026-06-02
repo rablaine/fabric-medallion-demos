@@ -9,6 +9,6 @@ AS
 BEGIN
     DROP TABLE IF EXISTS dbo.fact_orders;
     CREATE TABLE dbo.fact_orders AS
-    SELECT * FROM contoso_retail_silver_mirror.dbo.[order];
+    SELECT * FROM contoso_retail_silver_curated.dbo.[order];
 END
 GO

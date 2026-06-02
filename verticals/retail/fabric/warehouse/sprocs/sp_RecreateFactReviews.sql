@@ -5,6 +5,6 @@ AS
 BEGIN
     DROP TABLE IF EXISTS dbo.fact_reviews;
     CREATE TABLE dbo.fact_reviews AS
-    SELECT * FROM contoso_retail_silver_mirror.dbo.review;
+    SELECT * FROM contoso_retail_silver_curated.dbo.review;
 END
 GO
