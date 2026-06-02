@@ -807,16 +807,40 @@ function Invoke-GraphRest {
         [Parameter(Mandatory)] [string]$Path,
         [object]$Body
     )
-    $token = Get-GraphToken
     $uri = if ($Path.StartsWith('http')) { $Path } else { "https://graph.microsoft.com/v1.0/$($Path.TrimStart('/'))" }
-    $headers = @{ Authorization = "Bearer $token"; 'Content-Type' = 'application/json' }
-    $params = @{ Method = $Method; Uri = $uri; Headers = $headers; ErrorAction = 'Stop' }
-    if ($null -ne $Body) { $params.Body = ($Body | ConvertTo-Json -Depth 20 -Compress) }
-    try { return Invoke-RestMethod @params }
-    catch {
-        $msg = $_.Exception.Message
-        if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $msg += "`nResponse: $($_.ErrorDetails.Message)" }
-        throw "Graph $Method $Path failed: $msg"
+    $bodyJson = if ($null -ne $Body) { $Body | ConvertTo-Json -Depth 20 -Compress } else { $null }
+
+    # Attempt once. On 401 with a CAE-style challenge (Continuous Access
+    # Evaluation revoked our token mid-run -- common on long-running teardowns
+    # crossing a policy re-evaluation boundary), re-acquire a fresh token and
+    # retry exactly once. If the second attempt also fails we surface the
+    # original error so the user knows to `az login` again.
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $token = Get-GraphToken
+        $headers = @{ Authorization = "Bearer $token"; 'Content-Type' = 'application/json' }
+        $params = @{ Method = $Method; Uri = $uri; Headers = $headers; ErrorAction = 'Stop' }
+        if ($null -ne $bodyJson) { $params.Body = $bodyJson }
+        try { return Invoke-RestMethod @params }
+        catch {
+            $msg = $_.Exception.Message
+            $detail = if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { '' }
+            $isCae = ($msg -match '401') -and (
+                ($detail -match 'InvalidAuthenticationToken') -or
+                ($detail -match 'TokenCreatedWithOutdatedPolicies') -or
+                ($detail -match 'InteractionRequired') -or
+                ($detail -match 'CompactToken')
+            )
+            if ($isCae -and $attempt -eq 1) {
+                Write-Host "  graph token rejected (CAE re-eval); re-acquiring and retrying once..." -ForegroundColor DarkYellow
+                # Clear az's cached token for this resource so the next
+                # Get-GraphToken call forces a refresh.
+                az account get-access-token --resource 'https://graph.microsoft.com' --output none 2>$null | Out-Null
+                continue
+            }
+            if ($detail) { $msg += "`nResponse: $detail" }
+            if ($isCae) { $msg += "`nHint: your Graph token was revoked by Continuous Access Evaluation. Run 'az login' and re-run teardown to clean up any leftovers." }
+            throw "Graph $Method $Path failed: $msg"
+        }
     }
 }
 
