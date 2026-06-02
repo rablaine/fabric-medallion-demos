@@ -69,6 +69,23 @@
           "notebookId": "__SILVER_HR_NOTEBOOK_ID__",
           "workspaceId": "__SILVER_WORKSPACE_ID__"
         }
+      },
+      {
+        "name": "silver_curated_ops",
+        "description": "Runs silver_curated_ops: passthrough conformance for the operational / supplier tables (inventory, payment, promotion, return, review, shipment, supplier, warehouse). Trims strings, normalizes statuses, derives helper flags (is_stockout, is_on_time, rating_bucket, usage_remaining).",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.02:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "__SILVER_OPS_NOTEBOOK_ID__",
+          "workspaceId": "__SILVER_WORKSPACE_ID__"
+        }
       }
     ]
   }

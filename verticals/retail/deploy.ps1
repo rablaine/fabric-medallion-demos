@@ -1237,7 +1237,7 @@ $storTok = (az account get-access-token --resource 'https://storage.azure.com' -
 if (-not $storTok) { throw "Failed to get storage token for mirror polling" }
 $hdr = @{ Authorization = "Bearer $storTok" }
 $mirrorReadyDeadline = (Get-Date).AddMinutes(10)
-$mirrorTables = @('customers','products','orders','order_items','stores','customer_segments','categories','brands','employees','job_titles')
+$mirrorTables = @('customers','products','orders','order_items','stores','customer_segments','categories','brands','employees','job_titles','inventory','payments','promotions','returns','reviews','shipments','suppliers','warehouses')
 $mirrorStatusPath = "/workspaces/$($workspaces['1-bronze'].id)/mirroredDatabases/$($mirror.id)/getTablesMirroringStatus"
 $mirrorStopPath  = "/workspaces/$($workspaces['1-bronze'].id)/mirroredDatabases/$($mirror.id)/stopMirroring"
 $mirrorStartPath = "/workspaces/$($workspaces['1-bronze'].id)/mirroredDatabases/$($mirror.id)/startMirroring"
@@ -1305,6 +1305,14 @@ $silverShortcuts = @(
     @{ name='brands';            targetItem=$mirror.id;   targetPath='Tables/retail/brands' }
     @{ name='employees';         targetItem=$mirror.id;   targetPath='Tables/retail/employees' }
     @{ name='job_titles';        targetItem=$mirror.id;   targetPath='Tables/retail/job_titles' }
+    @{ name='inventory';         targetItem=$mirror.id;   targetPath='Tables/retail/inventory' }
+    @{ name='payments';          targetItem=$mirror.id;   targetPath='Tables/retail/payments' }
+    @{ name='promotions';        targetItem=$mirror.id;   targetPath='Tables/retail/promotions' }
+    @{ name='returns';           targetItem=$mirror.id;   targetPath='Tables/retail/returns' }
+    @{ name='reviews';           targetItem=$mirror.id;   targetPath='Tables/retail/reviews' }
+    @{ name='shipments';         targetItem=$mirror.id;   targetPath='Tables/retail/shipments' }
+    @{ name='suppliers';         targetItem=$mirror.id;   targetPath='Tables/retail/suppliers' }
+    @{ name='warehouses';        targetItem=$mirror.id;   targetPath='Tables/retail/warehouses' }
     @{ name='weather';           targetItem=$bronzeLh.id; targetPath='Tables/dbo/weather' }
 )
 foreach ($s in $silverShortcuts) {
@@ -1338,7 +1346,9 @@ Write-Ok "  id=$($silverMirrorLh.id)"
 Write-Step "Creating silver-mirror shortcuts (Tables/dbo -> silver_curated)"
 $mirrorShortcuts = @(
     'customer','product','order','order_line','store','employee',
-    'weather_daily','session','session_event'
+    'weather_daily','session','session_event',
+    'supplier','warehouse','promotion',
+    'inventory','payment','return','review','shipment'
 )
 foreach ($t in $mirrorShortcuts) {
     New-FabricOneLakeShortcut `
@@ -1370,6 +1380,31 @@ if ($failedTables.Count -gt 0) {
     throw "silver_mirror SQL endpoint refresh failed for: $(($failedTables | ForEach-Object { $_.tableName }) -join ', ')"
 }
 Write-Ok "  refreshed $($refreshResults.Count) tables"
+
+# Same refresh dance for the silver_curated, bronze lakehouse and bronze
+# SQL-mirror SEPs so analyst SQL queries (and the SQL endpoint web UI) see
+# the populated tables immediately after deploy. Without this, SELECT * FROM
+# silver_curated.dbo.weather_daily returns 0 rows until a SEP refresh runs,
+# even though OneLake has all the data. NotRun statuses are fine (means no
+# delta to sync) -- only Failed is an error.
+Write-Step "Refreshing silver_curated / bronze LH / bronze mirror SQL endpoints"
+$silverCuratedFull = (Invoke-FabricRest -Token $fabricToken -Method GET -Path "/workspaces/$($workspaces['2-silver'].id)/lakehouses/$($silverCuratedLh.id)").Body
+$silverCuratedSepId = $silverCuratedFull.properties.sqlEndpointProperties.id
+$bronzeLhFull = (Invoke-FabricRest -Token $fabricToken -Method GET -Path "/workspaces/$($workspaces['1-bronze'].id)/lakehouses/$($bronzeLh.id)").Body
+$bronzeLhSepId = $bronzeLhFull.properties.sqlEndpointProperties.id
+$bronzeMirrorFull = (Invoke-FabricRest -Token $fabricToken -Method GET -Path "/workspaces/$($workspaces['1-bronze'].id)/mirroredDatabases/$($mirror.id)").Body
+$bronzeMirrorSepId = $bronzeMirrorFull.properties.sqlEndpointProperties.id
+foreach ($sep in @(
+    @{ name='silver_curated'; wsId=$workspaces['2-silver'].id; sepId=$silverCuratedSepId }
+    @{ name='bronze_lh';      wsId=$workspaces['1-bronze'].id; sepId=$bronzeLhSepId }
+    @{ name='bronze_mirror';  wsId=$workspaces['1-bronze'].id; sepId=$bronzeMirrorSepId }
+)) {
+    if (-not $sep.sepId) { Write-Info "  $($sep.name): no SEP id, skipping"; continue }
+    $r = Invoke-FabricRest -Token $fabricToken -Method POST -Path "/workspaces/$($sep.wsId)/sqlEndpoints/$($sep.sepId)/refreshMetadata?preview=true" -Body @{}
+    $f = @($r.Body | Where-Object { $_.status -notin @('Success','NotRun') })
+    if ($f.Count -gt 0) { Write-Info "  $($sep.name): $($f.Count) Failed tables (continuing)" }
+    Write-Ok "  $($sep.name): $($r.Body.Count) tables"
+}
 
 # Tiny helper notebook in the gold workspace that re-runs the same
 # refreshMetadata call. The gold pipelines invoke it as their first activity
@@ -1462,7 +1497,7 @@ Write-Ok "  connection id=$($goldWhConn.id)"
 # enabled lakehouses require the dbo prefix or tables won't show up in the SQL
 # endpoint.
 # -----------------------------------------------------------------------------
-Write-Step "Uploading silver_curated notebooks (retail / weather / clickstream) in parallel"
+Write-Step "Uploading silver_curated notebooks (retail / weather / clickstream / hr / ops) in parallel"
 $silverNbDir = Join-Path $PSScriptRoot 'fabric' 'notebooks' 'silver_promotion'
 $silverWsId  = $workspaces['2-silver'].id
 $silverParams = @{
@@ -1484,19 +1519,23 @@ $silverClickstreamJob = Start-ThreadJob -Name 'nb-upload-silver-clickstream' -Sc
     $fabricToken, $silverWsId, 'silver_curated_clickstream', (Join-Path $silverNbDir 'silver_curated_clickstream.ipynb'), $silverClickstreamParams, $fabricPs1Path
 $silverHrJob = Start-ThreadJob -Name 'nb-upload-silver-hr' -ScriptBlock $bakeAndUpload -ArgumentList `
     $fabricToken, $silverWsId, 'silver_curated_hr', (Join-Path $silverNbDir 'silver_curated_hr.ipynb'), $silverParams, $fabricPs1Path
+$silverOpsJob = Start-ThreadJob -Name 'nb-upload-silver-ops' -ScriptBlock $bakeAndUpload -ArgumentList `
+    $fabricToken, $silverWsId, 'silver_curated_ops', (Join-Path $silverNbDir 'silver_curated_ops.ipynb'), $silverParams, $fabricPs1Path
 
-@($silverRetailJob, $silverWeatherJob, $silverClickstreamJob, $silverHrJob) | Wait-Job | Out-Null
+@($silverRetailJob, $silverWeatherJob, $silverClickstreamJob, $silverHrJob, $silverOpsJob) | Wait-Job | Out-Null
 $silverRetailNb      = Receive-Job -Job $silverRetailJob;      Remove-Job -Job $silverRetailJob
 $silverWeatherNb     = Receive-Job -Job $silverWeatherJob;     Remove-Job -Job $silverWeatherJob
 $silverClickstreamNb = Receive-Job -Job $silverClickstreamJob; Remove-Job -Job $silverClickstreamJob
 $silverHrNb          = Receive-Job -Job $silverHrJob;          Remove-Job -Job $silverHrJob
-if (-not $silverRetailNb -or -not $silverWeatherNb -or -not $silverClickstreamNb -or -not $silverHrNb) {
-    throw "One or more silver notebook uploads failed (retail=$($null -ne $silverRetailNb), weather=$($null -ne $silverWeatherNb), clickstream=$($null -ne $silverClickstreamNb), hr=$($null -ne $silverHrNb))"
+$silverOpsNb         = Receive-Job -Job $silverOpsJob;         Remove-Job -Job $silverOpsJob
+if (-not $silverRetailNb -or -not $silverWeatherNb -or -not $silverClickstreamNb -or -not $silverHrNb -or -not $silverOpsNb) {
+    throw "One or more silver notebook uploads failed (retail=$($null -ne $silverRetailNb), weather=$($null -ne $silverWeatherNb), clickstream=$($null -ne $silverClickstreamNb), hr=$($null -ne $silverHrNb), ops=$($null -ne $silverOpsNb))"
 }
 Write-Ok "  silver_curated_retail      id=$($silverRetailNb.id)"
 Write-Ok "  silver_curated_weather     id=$($silverWeatherNb.id)"
 Write-Ok "  silver_curated_clickstream id=$($silverClickstreamNb.id)"
 Write-Ok "  silver_curated_hr          id=$($silverHrNb.id)"
+Write-Ok "  silver_curated_ops         id=$($silverOpsNb.id)"
 
 # -----------------------------------------------------------------------------
 # Silver orchestration pipelines. Live in the BRONZE workspace (alongside the
@@ -1521,6 +1560,7 @@ $silverPl = New-FabricDataPipelineFromFile `
         '__SILVER_WEATHER_NOTEBOOK_ID__'       = $silverWeatherNb.id
         '__SILVER_CLICKSTREAM_NOTEBOOK_ID__'   = $silverClickstreamNb.id
         '__SILVER_HR_NOTEBOOK_ID__'            = $silverHrNb.id
+        '__SILVER_OPS_NOTEBOOK_ID__'           = $silverOpsNb.id
     }
 Write-Ok "  pipeline id=$($silverPl.id)"
 
@@ -1537,6 +1577,7 @@ $silverIncPl = New-FabricDataPipelineFromFile `
         '__SILVER_WEATHER_NOTEBOOK_ID__'       = $silverWeatherNb.id
         '__SILVER_CLICKSTREAM_NOTEBOOK_ID__'   = $silverClickstreamNb.id
         '__SILVER_HR_NOTEBOOK_ID__'            = $silverHrNb.id
+        '__SILVER_OPS_NOTEBOOK_ID__'           = $silverOpsNb.id
     }
 Write-Ok "  pipeline id=$($silverIncPl.id)"
 
@@ -1643,9 +1684,9 @@ Write-Host "  Weather notebook: ingest_weather             (run by pl_bronze_wea
 Write-Host "  Pipeline:         pl_bronze_weather_ingest"
 Write-Host "  Pipeline:         pl_bronze_initial_load     (bronze orchestrator -- runs pl_bronze_weather_ingest today; more child pipelines TBD)"
 Write-Host "  Pipeline:         pl_bronze_incremental_load (same wiring; idempotent re-run / schedule entry point)"
-Write-Host "  Pipeline:         pl_silver_initial_load     (fans out the three silver_curated_* notebooks in the silver workspace)"
+Write-Host "  Pipeline:         pl_silver_initial_load     (fans out the five silver_curated_* notebooks in the silver workspace)"
 Write-Host "  Pipeline:         pl_silver_incremental_load (same fan-out; idempotent re-run / schedule entry point)"
-Write-Host "  Pipeline:         pl_gold_initial_load       (10 stored-procedure activities against contoso_retail_gold: 6 dim sprocs in parallel -> 4 fact sprocs)"
+Write-Host "  Pipeline:         pl_gold_initial_load       (19 activities: SEP refresh -> 9 dim sprocs in parallel -> 9 fact sprocs)"
 Write-Host "  Pipeline:         pl_gold_incremental_load   (same DROP+CTAS sprocs; re-run IS the incremental path)"
 Write-Host "  Pipeline:         pl_full_initial_load       (TOP-LEVEL medallion orchestrator -- bronze initial -> silver initial -> gold initial)"
 Write-Host "  Pipeline:         pl_full_incremental_load   (TOP-LEVEL incremental orchestrator -- bronze incremental -> silver incremental -> gold incremental)"
@@ -1653,20 +1694,21 @@ Write-Host "  Mirrored DB:      contoso_retail_sql_mirror (initial snapshot in p
 Write-Host "  Shortcut:         Files/raw -> $($outputs.storageAccount.value)/raw"
 Write-Host ""
 Write-Host "Silver workspace contents:" -ForegroundColor Yellow
-Write-Host "  Lakehouse (raw):     contoso_retail_silver_raw      (shortcuts: dbo.customers, dbo.products, dbo.orders, dbo.order_items, dbo.stores, dbo.customer_segments, dbo.categories, dbo.brands, dbo.employees, dbo.job_titles, dbo.weather)"
-Write-Host "  Lakehouse (curated): contoso_retail_silver_curated  (silver_curated_* notebook write target; 9 empty placeholder Deltas materialized by seed for shortcut bootstrap)"
+Write-Host "  Lakehouse (raw):     contoso_retail_silver_raw      (shortcuts: dbo.customers, dbo.products, dbo.orders, dbo.order_items, dbo.stores, dbo.customer_segments, dbo.categories, dbo.brands, dbo.employees, dbo.job_titles, dbo.inventory, dbo.payments, dbo.promotions, dbo.returns, dbo.reviews, dbo.shipments, dbo.suppliers, dbo.warehouses, dbo.weather)"
+Write-Host "  Lakehouse (curated): contoso_retail_silver_curated  (silver_curated_* notebook write target; 17 empty placeholder Deltas materialized by seed for shortcut bootstrap)"
 Write-Host "  Notebooks (silver_promotion/): silver_curated_retail (customer/product/order/order_line/store with cross-source enrichment),"
 Write-Host "                                  silver_curated_weather (weather_daily with derived flags),"
 Write-Host "                                  silver_curated_clickstream (session + session_event from Eventhouse),"
-Write-Host "                                  silver_curated_hr (employee denormalized with title/store/manager + tenure/age/salary bands)"
+Write-Host "                                  silver_curated_hr (employee denormalized with title/store/manager + tenure/age/salary bands),"
+Write-Host "                                  silver_curated_ops (inventory/payment/promotion/return/review/shipment/supplier/warehouse passthrough + derived flags)"
 Write-Host "  (silver_curated_* notebooks are invoked cross-workspace by the pl_silver_* pipelines that live in the bronze workspace.)"
 Write-Host ""
 Write-Host "Gold workspace contents:" -ForegroundColor Yellow
-Write-Host "  Lakehouse:        contoso_retail_silver_mirror (shortcut lakehouse -- 9 Tables/dbo shortcuts into silver_curated; sprocs read from here via 3-part name)"
+Write-Host "  Lakehouse:        contoso_retail_silver_mirror (shortcut lakehouse -- 17 Tables/dbo shortcuts into silver_curated; sprocs read from here via 3-part name)"
 Write-Host "  Warehouse:        contoso_retail_gold"
-Write-Host "    Dimensions:     dim_date (fiscal year starts July 1), dim_customer, dim_product, dim_store, dim_channel, dim_employee"
-Write-Host "    Facts:          fact_orders (order header), fact_sales (order line), fact_weather_daily (per store per day), fact_sessions (web/app)"
-Write-Host "    Sprocs:         sp_RecreateDim* (x6), sp_RecreateFact* (x4) -- all DROP TABLE IF EXISTS + CTAS from silver_mirror.dbo.*"
+Write-Host "    Dimensions:     dim_date (fiscal year starts July 1), dim_customer, dim_product, dim_store, dim_channel, dim_employee, dim_supplier, dim_warehouse, dim_promotion"
+Write-Host "    Facts:          fact_orders, fact_sales, fact_weather_daily, fact_sessions, fact_inventory, fact_payments, fact_returns, fact_reviews, fact_shipments"
+Write-Host "    Sprocs:         sp_RecreateDim* (x9), sp_RecreateFact* (x9) -- all DROP TABLE IF EXISTS + CTAS from silver_mirror.dbo.*"
 Write-Host "    (Populated by pl_gold_initial_load -- or pl_full_initial_load. Empty placeholder rows until silver_curated runs at least once.)"
 Write-Host ""
 Write-Host "Streaming source:" -ForegroundColor Yellow

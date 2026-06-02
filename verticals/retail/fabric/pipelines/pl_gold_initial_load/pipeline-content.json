@@ -176,6 +176,36 @@
         }
       },
       {
+        "name": "Recreate dim_supplier",
+        "type": "SqlServerStoredProcedure",
+        "dependsOn": [
+          { "activity": "Refresh silver_mirror metadata", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateDimSupplier]", "database": "contoso_retail_gold" },
+        "externalReferences": { "connection": "__WAREHOUSE_CONNECTION_ID__" }
+      },
+      {
+        "name": "Recreate dim_warehouse",
+        "type": "SqlServerStoredProcedure",
+        "dependsOn": [
+          { "activity": "Refresh silver_mirror metadata", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateDimWarehouse]", "database": "contoso_retail_gold" },
+        "externalReferences": { "connection": "__WAREHOUSE_CONNECTION_ID__" }
+      },
+      {
+        "name": "Recreate dim_promotion",
+        "type": "SqlServerStoredProcedure",
+        "dependsOn": [
+          { "activity": "Refresh silver_mirror metadata", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateDimPromotion]", "database": "contoso_retail_gold" },
+        "externalReferences": { "connection": "__WAREHOUSE_CONNECTION_ID__" }
+      },
+      {
         "name": "Recreate fact_orders",
         "type": "SqlServerStoredProcedure",
         "dependsOn": [
@@ -356,6 +386,63 @@
         "externalReferences": {
           "connection": "__WAREHOUSE_CONNECTION_ID__"
         }
+      },
+      {
+        "name": "Recreate fact_inventory",
+        "type": "SqlServerStoredProcedure",
+        "dependsOn": [
+          { "activity": "Recreate dim_product",   "dependencyConditions": ["Succeeded"] },
+          { "activity": "Recreate dim_warehouse", "dependencyConditions": ["Succeeded"] },
+          { "activity": "Recreate dim_store",     "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateFactInventory]", "database": "contoso_retail_gold" },
+        "externalReferences": { "connection": "__WAREHOUSE_CONNECTION_ID__" }
+      },
+      {
+        "name": "Recreate fact_payments",
+        "type": "SqlServerStoredProcedure",
+        "dependsOn": [
+          { "activity": "Recreate dim_date", "dependencyConditions": ["Succeeded"] },
+          { "activity": "Refresh silver_mirror metadata", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateFactPayments]", "database": "contoso_retail_gold" },
+        "externalReferences": { "connection": "__WAREHOUSE_CONNECTION_ID__" }
+      },
+      {
+        "name": "Recreate fact_returns",
+        "type": "SqlServerStoredProcedure",
+        "dependsOn": [
+          { "activity": "Recreate dim_date",     "dependencyConditions": ["Succeeded"] },
+          { "activity": "Recreate dim_customer", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateFactReturns]", "database": "contoso_retail_gold" },
+        "externalReferences": { "connection": "__WAREHOUSE_CONNECTION_ID__" }
+      },
+      {
+        "name": "Recreate fact_reviews",
+        "type": "SqlServerStoredProcedure",
+        "dependsOn": [
+          { "activity": "Recreate dim_date",     "dependencyConditions": ["Succeeded"] },
+          { "activity": "Recreate dim_product",  "dependencyConditions": ["Succeeded"] },
+          { "activity": "Recreate dim_customer", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateFactReviews]", "database": "contoso_retail_gold" },
+        "externalReferences": { "connection": "__WAREHOUSE_CONNECTION_ID__" }
+      },
+      {
+        "name": "Recreate fact_shipments",
+        "type": "SqlServerStoredProcedure",
+        "dependsOn": [
+          { "activity": "Recreate dim_date",      "dependencyConditions": ["Succeeded"] },
+          { "activity": "Recreate dim_warehouse", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.12:00:00", "retry": 0, "retryIntervalInSeconds": 30, "secureOutput": false, "secureInput": false },
+        "typeProperties": { "storedProcedureName": "[dbo].[sp_RecreateFactShipments]", "database": "contoso_retail_gold" },
+        "externalReferences": { "connection": "__WAREHOUSE_CONNECTION_ID__" }
       }
     ]
   }
