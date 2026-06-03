@@ -1,0 +1,124 @@
+/// Current inventory snapshot per (product, location). Updated by mirror; one row per stock-keeping location.
+table fact_inventory
+	lineageTag: aa000036-0000-0000-0000-000000000001
+
+	column inventory_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: inventory_id
+		lineageTag: aa000036-0000-0000-0000-000000000002
+
+	column product_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: product_id
+		lineageTag: aa000036-0000-0000-0000-000000000003
+
+	column 'Location Type'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: location_type
+		lineageTag: aa000036-0000-0000-0000-000000000004
+
+	column 'Location ID'
+		dataType: int64
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: location_id
+		lineageTag: aa000036-0000-0000-0000-000000000005
+
+	column 'Quantity On Hand'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: sum
+		sourceColumn: quantity_on_hand
+		lineageTag: aa000036-0000-0000-0000-000000000006
+
+	column 'Quantity Reserved'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: sum
+		sourceColumn: quantity_reserved
+		lineageTag: aa000036-0000-0000-0000-000000000007
+
+	column 'Quantity Available'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: sum
+		sourceColumn: quantity_available
+		lineageTag: aa000036-0000-0000-0000-000000000008
+
+	column 'Reorder Point'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: sum
+		sourceColumn: reorder_point
+		lineageTag: aa000036-0000-0000-0000-000000000009
+
+	column 'Is Stockout'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_stockout
+		lineageTag: aa000036-0000-0000-0000-00000000000a
+
+	column 'Needs Reorder'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: needs_reorder
+		lineageTag: aa000036-0000-0000-0000-00000000000b
+
+	measure 'On-Hand Units' = SUM('fact_inventory'[Quantity On Hand])
+		formatString: '#,0'
+		lineageTag: aa000036-0000-0000-0000-000000000100
+		displayFolder: 'Inventory'
+
+	measure 'Available Units' = SUM('fact_inventory'[Quantity Available])
+		formatString: '#,0'
+		lineageTag: aa000036-0000-0000-0000-000000000101
+		displayFolder: 'Inventory'
+
+	measure 'Stockout SKUs' = ```
+			CALCULATE(
+				DISTINCTCOUNT('fact_inventory'[product_id]),
+				'fact_inventory'[Is Stockout] = TRUE
+			)
+			```
+		formatString: '#,0'
+		lineageTag: aa000036-0000-0000-0000-000000000102
+		displayFolder: 'Inventory'
+
+	measure 'Reorder Needed SKUs' = ```
+			CALCULATE(
+				DISTINCTCOUNT('fact_inventory'[product_id]),
+				'fact_inventory'[Needs Reorder] = TRUE
+			)
+			```
+		formatString: '#,0'
+		lineageTag: aa000036-0000-0000-0000-000000000103
+		displayFolder: 'Inventory'
+
+	measure 'Stockout %' = ```
+			DIVIDE(
+				[Stockout SKUs],
+				DISTINCTCOUNT('fact_inventory'[product_id])
+			)
+			```
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: aa000036-0000-0000-0000-000000000104
+		displayFolder: 'Inventory'
+
+	partition fact_inventory = entity
+		mode: directLake
+		source
+			entityName: fact_inventory
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+

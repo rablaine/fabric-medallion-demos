@@ -1,0 +1,161 @@
+/// Product / SKU master with category, brand, pricing, and margin.
+table dim_product
+	lineageTag: aa000022-0000-0000-0000-000000000001
+
+	column 'Product ID'
+		dataType: int64
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: product_id
+		lineageTag: aa000022-0000-0000-0000-000000000002
+		isKey
+
+	column SKU
+		dataType: string
+		summarizeBy: none
+		sourceColumn: sku
+		lineageTag: aa000022-0000-0000-0000-000000000003
+
+	column 'Product Name'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: product_name
+		lineageTag: aa000022-0000-0000-0000-000000000004
+
+	column Category
+		dataType: string
+		summarizeBy: none
+		sourceColumn: category_name
+		lineageTag: aa000022-0000-0000-0000-000000000005
+		displayFolder: Taxonomy
+
+	column 'Category Path'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: category_path
+		lineageTag: aa000022-0000-0000-0000-000000000006
+		displayFolder: Taxonomy
+
+	column Brand
+		dataType: string
+		summarizeBy: none
+		sourceColumn: brand_name
+		lineageTag: aa000022-0000-0000-0000-000000000007
+		displayFolder: Taxonomy
+
+	column 'Is Premium Brand'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_premium_brand
+		lineageTag: aa000022-0000-0000-0000-000000000008
+		displayFolder: Taxonomy
+
+	column 'List Price'
+		dataType: decimal
+		formatString: '\$#,0.00;(\$#,0.00);\$#,0.00'
+		summarizeBy: none
+		sourceColumn: list_price
+		lineageTag: aa000022-0000-0000-0000-000000000009
+		displayFolder: Pricing
+
+	column Cost
+		dataType: decimal
+		formatString: '\$#,0.00;(\$#,0.00);\$#,0.00'
+		summarizeBy: none
+		sourceColumn: cost
+		lineageTag: aa000022-0000-0000-0000-00000000000a
+		displayFolder: Pricing
+
+	column Margin
+		dataType: decimal
+		formatString: '\$#,0.00;(\$#,0.00);\$#,0.00'
+		summarizeBy: none
+		sourceColumn: margin
+		lineageTag: aa000022-0000-0000-0000-00000000000b
+		displayFolder: Pricing
+
+	column 'Margin %'
+		dataType: decimal
+		formatString: '0.0%;-0.0%;0.0%'
+		summarizeBy: none
+		sourceColumn: margin_pct
+		lineageTag: aa000022-0000-0000-0000-00000000000c
+		displayFolder: Pricing
+
+	column Color
+		dataType: string
+		summarizeBy: none
+		sourceColumn: color
+		lineageTag: aa000022-0000-0000-0000-00000000000d
+		displayFolder: Attributes
+
+	column 'Model Year'
+		dataType: int64
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: model_year
+		lineageTag: aa000022-0000-0000-0000-00000000000e
+		displayFolder: Attributes
+
+	column 'Warranty Months'
+		dataType: int64
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: warranty_months
+		lineageTag: aa000022-0000-0000-0000-00000000000f
+		displayFolder: Attributes
+
+	column 'Is Active'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_active
+		lineageTag: aa000022-0000-0000-0000-000000000010
+		displayFolder: Lifecycle
+
+	column 'Is Discontinued'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_discontinued
+		lineageTag: aa000022-0000-0000-0000-000000000011
+		displayFolder: Lifecycle
+
+	column 'Launched Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: launched_at
+		lineageTag: aa000022-0000-0000-0000-000000000012
+		displayFolder: Lifecycle
+
+	column 'Popularity Rank'
+		dataType: int64
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: popularity_rank
+		lineageTag: aa000022-0000-0000-0000-000000000013
+		displayFolder: Lifecycle
+
+	/// Distinct SKUs in current filter context.
+	measure 'SKU Count' = DISTINCTCOUNT('dim_product'[Product ID])
+		formatString: '#,0'
+		lineageTag: aa000022-0000-0000-0000-000000000100
+		displayFolder: 'Catalog'
+
+	/// Average list-price-based margin % across selected SKUs.
+	measure 'Avg Margin %' = AVERAGE('dim_product'[Margin %])
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: aa000022-0000-0000-0000-000000000101
+		displayFolder: 'Catalog'
+
+	partition dim_product = entity
+		mode: directLake
+		source
+			entityName: dim_product
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+

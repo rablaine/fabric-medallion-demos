@@ -1,0 +1,25 @@
+{
+  "properties": {
+    "description": "Bronze incremental load. The 'incremental' part for OLTP retail data is fully driven by the SQL Mirror (continuous CDC) -- so this pipeline only needs to refresh the bronze sources that are NOT mirrored. Today that means the daily weather pull. Synthetic-activity generation runs as the first step of pl_incremental_load (not part of bronze) and self-polls the mirror before returning.",
+    "activities": [
+      {
+        "name": "Weather catchup",
+        "description": "Runs pl_bronze_weather_ingest. The ingest_weather notebook merges on (date, store_id) so re-running picks up only new days since the last run.",
+        "type": "ExecutePipeline",
+        "dependsOn": [],
+        "policy": {
+          "secureInput": false
+        },
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "__WEATHER_PIPELINE_ID__",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {},
+          "workspaceId": "__BRONZE_WORKSPACE_ID__"
+        }
+      }
+    ]
+  }
+}

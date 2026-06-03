@@ -1,0 +1,113 @@
+/// Product reviews. One row per review.
+table fact_reviews
+	lineageTag: aa000035-0000-0000-0000-000000000001
+
+	column review_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: review_id
+		lineageTag: aa000035-0000-0000-0000-000000000002
+
+	column product_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: product_id
+		lineageTag: aa000035-0000-0000-0000-000000000003
+
+	column order_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: order_id
+		lineageTag: aa000035-0000-0000-0000-000000000004
+
+	column Rating
+		dataType: int64
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: rating
+		lineageTag: aa000035-0000-0000-0000-000000000005
+
+	column 'Rating Bucket'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: rating_bucket
+		lineageTag: aa000035-0000-0000-0000-000000000006
+
+	column 'Helpful Count'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: sum
+		sourceColumn: helpful_count
+		lineageTag: aa000035-0000-0000-0000-000000000007
+
+	column 'Review Title'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: review_title
+		lineageTag: aa000035-0000-0000-0000-000000000008
+
+	column 'Review Text'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: review_text
+		lineageTag: aa000035-0000-0000-0000-000000000009
+
+	column 'Is Verified Purchase'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_verified_purchase
+		lineageTag: aa000035-0000-0000-0000-00000000000a
+
+	column 'Created Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: created_date
+		lineageTag: aa000035-0000-0000-0000-00000000000b
+
+	measure 'Review Count' = COUNTROWS('fact_reviews')
+		formatString: '#,0'
+		lineageTag: aa000035-0000-0000-0000-000000000100
+		displayFolder: 'Reviews'
+
+	measure 'Avg Rating' = AVERAGE('fact_reviews'[Rating])
+		formatString: '0.00'
+		lineageTag: aa000035-0000-0000-0000-000000000101
+		displayFolder: 'Reviews'
+
+	measure '5-Star %' = ```
+			DIVIDE(
+				CALCULATE([Review Count], 'fact_reviews'[Rating] = 5),
+				[Review Count]
+			)
+			```
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: aa000035-0000-0000-0000-000000000102
+		displayFolder: 'Reviews'
+
+	measure '1-2 Star %' = ```
+			DIVIDE(
+				CALCULATE([Review Count], 'fact_reviews'[Rating] <= 2),
+				[Review Count]
+			)
+			```
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: aa000035-0000-0000-0000-000000000103
+		displayFolder: 'Reviews'
+
+	partition fact_reviews = entity
+		mode: directLake
+		source
+			entityName: fact_reviews
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+

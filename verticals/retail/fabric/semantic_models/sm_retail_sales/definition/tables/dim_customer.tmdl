@@ -1,0 +1,156 @@
+/// Customer master with loyalty, segmentation, and lifecycle state.
+table dim_customer
+	lineageTag: aa000021-0000-0000-0000-000000000001
+
+	column 'Customer ID'
+		dataType: int64
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: customer_id
+		lineageTag: aa000021-0000-0000-0000-000000000002
+		isKey
+
+	column 'Full Name'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: full_name
+		lineageTag: aa000021-0000-0000-0000-000000000003
+
+	column Email
+		dataType: string
+		summarizeBy: none
+		sourceColumn: email
+		lineageTag: aa000021-0000-0000-0000-000000000004
+		dataCategory: EmailAddress
+
+	column City
+		dataType: string
+		summarizeBy: none
+		sourceColumn: city
+		lineageTag: aa000021-0000-0000-0000-000000000005
+		dataCategory: City
+		displayFolder: Location
+
+	column State
+		dataType: string
+		summarizeBy: none
+		sourceColumn: state
+		lineageTag: aa000021-0000-0000-0000-000000000006
+		dataCategory: 'State or Province'
+		displayFolder: Location
+
+	column Country
+		dataType: string
+		summarizeBy: none
+		sourceColumn: country
+		lineageTag: aa000021-0000-0000-0000-000000000007
+		dataCategory: Country
+		displayFolder: Location
+
+	column Segment
+		dataType: string
+		summarizeBy: none
+		sourceColumn: segment_name
+		lineageTag: aa000021-0000-0000-0000-000000000008
+		displayFolder: Segmentation
+
+	column 'Loyalty Tier'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: loyalty_tier
+		lineageTag: aa000021-0000-0000-0000-000000000009
+		displayFolder: Segmentation
+
+	/// New / Active / At Risk / Churned (computed in gold).
+	column 'Lifecycle Status'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: lifecycle_status
+		lineageTag: aa000021-0000-0000-0000-00000000000a
+		displayFolder: Segmentation
+
+	column 'Marketing Opt-In'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: marketing_opt_in
+		lineageTag: aa000021-0000-0000-0000-00000000000b
+		displayFolder: Segmentation
+
+	column 'Loyalty Points'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: sum
+		sourceColumn: loyalty_points
+		lineageTag: aa000021-0000-0000-0000-00000000000c
+		displayFolder: Loyalty
+
+	column 'Signup Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: signup_date
+		lineageTag: aa000021-0000-0000-0000-00000000000d
+		displayFolder: Lifecycle
+
+	column 'Tenure Days'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: none
+		sourceColumn: tenure_days
+		lineageTag: aa000021-0000-0000-0000-00000000000e
+		displayFolder: Lifecycle
+
+	column 'Last Order Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: last_order_date
+		lineageTag: aa000021-0000-0000-0000-00000000000f
+		displayFolder: Lifecycle
+
+	column 'Days Since Last Order'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: none
+		sourceColumn: days_since_last_order
+		lineageTag: aa000021-0000-0000-0000-000000000010
+		displayFolder: Lifecycle
+
+	column 'Lifetime Orders'
+		dataType: int64
+		isHidden
+		formatString: '#,0'
+		summarizeBy: none
+		sourceColumn: lifetime_orders
+		lineageTag: aa000021-0000-0000-0000-000000000011
+
+	column 'Lifetime Revenue'
+		dataType: double
+		isHidden
+		formatString: '\$#,0'
+		summarizeBy: none
+		sourceColumn: lifetime_revenue
+		lineageTag: aa000021-0000-0000-0000-000000000012
+
+	/// Distinct customers in current filter context.
+	measure 'Customer Count' = DISTINCTCOUNT('dim_customer'[Customer ID])
+		formatString: '#,0'
+		lineageTag: aa000021-0000-0000-0000-000000000100
+		displayFolder: 'Customer'
+
+	/// Average lifetime revenue across selected customers (from gold-precomputed totals).
+	measure 'Avg Lifetime Revenue' = AVERAGE('dim_customer'[Lifetime Revenue])
+		formatString: '\$#,0'
+		lineageTag: aa000021-0000-0000-0000-000000000101
+		displayFolder: 'Customer'
+
+	partition dim_customer = entity
+		mode: directLake
+		source
+			entityName: dim_customer
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+

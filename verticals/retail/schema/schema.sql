@@ -350,7 +350,7 @@ CREATE TABLE retail.payments (
     processed_at        DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     CONSTRAINT FK_payments_order FOREIGN KEY (order_id) REFERENCES retail.orders(order_id),
     CONSTRAINT CK_payments_method CHECK (payment_method IN ('credit_card','debit_card','paypal','apple_pay','google_pay','store_credit','gift_card')),
-    CONSTRAINT CK_payments_status CHECK (status IN ('authorized','captured','refunded','failed','voided'))
+    CONSTRAINT CK_payments_status CHECK (status IN ('authorized','captured','refunded','failed','declined','voided'))
 );
 GO
 

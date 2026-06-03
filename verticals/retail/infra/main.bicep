@@ -20,7 +20,7 @@ param location string = resourceGroup().location
 @description('Object ID of the AAD principal to grant SQL admin (your user)')
 param sqlAdminObjectId string
 
-@description('Display name of the AAD principal for SQL admin')
+@description('Display name (UPN) of the AAD principal for SQL admin AND Fabric capacity admin')
 param sqlAdminLoginName string
 
 @description('Client IP to allow through SQL firewall (your public IP)')
@@ -56,6 +56,22 @@ var funcAppName    = toLower('${resourcePrefix}-retail-emit-${substring(suffix, 
 var funcStorageAcc = toLower('${resourcePrefix}rtfn${substring(suffix, 0, 8)}')          // dedicated storage for the Function runtime
 var funcPlanName   = toLower('${resourcePrefix}-retail-funcplan-${substring(suffix, 0, 6)}')
 var funcAiName     = toLower('${resourcePrefix}-retail-funcai-${substring(suffix, 0, 6)}')
+var fabricCapacity = toLower('${resourcePrefix}retail${substring(suffix, 0, 8)}')
+
+// -----------------------------------------------------------------------------
+// Fabric capacity (F8). Provisioned in the same bicep run as storage/sql/func
+// now that we no longer need to pre-create workspaces + tenant-setting grants
+// before main bicep starts.
+// -----------------------------------------------------------------------------
+module fabric 'modules/fabric.bicep' = {
+  name: 'fabric-deploy'
+  params: {
+    name: fabricCapacity
+    location: location
+    adminUserPrincipalName: sqlAdminLoginName
+    tags: tags
+  }
+}
 
 // -----------------------------------------------------------------------------
 // Storage (ADLS Gen2)
@@ -88,12 +104,6 @@ module sql 'modules/sql.bicep' = {
     tags: tags
   }
 }
-
-// -----------------------------------------------------------------------------
-// Fabric capacity is deployed separately by fabric-capacity.bicep BEFORE this
-// template runs, so Fabric workspaces + workspace identity + tenant-setting
-// grants can propagate in parallel with the storage/sql/function deploy.
-// -----------------------------------------------------------------------------
 
 // -----------------------------------------------------------------------------
 // Function App (clickstream emitter, Linux Flex Consumption)
@@ -129,3 +139,4 @@ output curatedContainer   string = storage.outputs.curatedContainerName
 output uniqueSuffix       string = substring(suffix, 0, 8)
 output functionAppName    string = funcApp.outputs.appName
 output functionHostname   string = funcApp.outputs.defaultHostname
+output fabricCapacityName string = fabricCapacity

@@ -1,0 +1,87 @@
+/// Store / location dimension. Also used for HQ employees.
+table dim_store
+	lineageTag: bb000021-0000-0000-0000-000000000001
+
+	column 'Store ID'
+		dataType: int64
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: store_id
+		lineageTag: bb000021-0000-0000-0000-000000000002
+		isKey
+
+	column 'Store Name'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_name
+		lineageTag: bb000021-0000-0000-0000-000000000003
+
+	column 'Store Type'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_type
+		lineageTag: bb000021-0000-0000-0000-000000000004
+
+	column City
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_city
+		lineageTag: bb000021-0000-0000-0000-000000000005
+		dataCategory: City
+		displayFolder: Location
+
+	column State
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_state
+		lineageTag: bb000021-0000-0000-0000-000000000006
+		dataCategory: 'State or Province'
+		displayFolder: Location
+
+	column Country
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_country
+		lineageTag: bb000021-0000-0000-0000-000000000007
+		dataCategory: Country
+		displayFolder: Location
+
+	column Region
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_region
+		lineageTag: bb000021-0000-0000-0000-000000000008
+		displayFolder: Location
+
+	column 'Square Feet'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: sum
+		sourceColumn: square_feet
+		lineageTag: bb000021-0000-0000-0000-000000000009
+		displayFolder: Attributes
+
+	column 'Store Manager'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_manager_name
+		lineageTag: bb000021-0000-0000-0000-00000000000a
+		displayFolder: Attributes
+
+	column 'Opened Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: opened_at
+		lineageTag: bb000021-0000-0000-0000-00000000000b
+		displayFolder: Attributes
+
+	partition dim_store = entity
+		mode: directLake
+		source
+			entityName: dim_store
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+

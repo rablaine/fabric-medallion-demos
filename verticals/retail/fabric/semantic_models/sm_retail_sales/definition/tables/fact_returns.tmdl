@@ -1,0 +1,109 @@
+/// Customer returns. One row per returned line.
+table fact_returns
+	lineageTag: aa000034-0000-0000-0000-000000000001
+
+	column return_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: return_id
+		lineageTag: aa000034-0000-0000-0000-000000000002
+
+	column order_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: order_id
+		lineageTag: aa000034-0000-0000-0000-000000000003
+
+	column 'Return Reason'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: return_reason
+		lineageTag: aa000034-0000-0000-0000-000000000004
+
+	column Quantity
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: sum
+		sourceColumn: quantity
+		lineageTag: aa000034-0000-0000-0000-000000000005
+
+	column 'Refund Amount'
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: refund_amount
+		lineageTag: aa000034-0000-0000-0000-000000000006
+
+	column 'Return Status'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: return_status
+		lineageTag: aa000034-0000-0000-0000-000000000007
+
+	column 'Requested Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: requested_date
+		lineageTag: aa000034-0000-0000-0000-000000000008
+
+	column 'Completed Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: completed_date
+		lineageTag: aa000034-0000-0000-0000-000000000009
+
+	column 'Days to Complete'
+		dataType: int64
+		formatString: '0'
+		summarizeBy: average
+		sourceColumn: days_to_complete
+		lineageTag: aa000034-0000-0000-0000-00000000000a
+
+	column 'Is Completed'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_completed
+		lineageTag: aa000034-0000-0000-0000-00000000000b
+
+	measure 'Return Count' = COUNTROWS('fact_returns')
+		formatString: '#,0'
+		lineageTag: aa000034-0000-0000-0000-000000000100
+		displayFolder: 'Returns'
+
+	measure 'Returned Orders' = DISTINCTCOUNT('fact_returns'[order_id])
+		formatString: '#,0'
+		lineageTag: aa000034-0000-0000-0000-000000000101
+		displayFolder: 'Returns'
+
+	measure 'Refund $' = SUM('fact_returns'[Refund Amount])
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000034-0000-0000-0000-000000000102
+		displayFolder: 'Returns'
+
+	/// Returned orders divided by total orders. Depends on [Order Count] from fact_orders.
+	measure 'Return Rate' = DIVIDE([Returned Orders], [Order Count])
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: aa000034-0000-0000-0000-000000000103
+		displayFolder: 'Returns'
+
+	measure 'Avg Days to Resolve' = AVERAGE('fact_returns'[Days to Complete])
+		formatString: '0.0'
+		lineageTag: aa000034-0000-0000-0000-000000000104
+		displayFolder: 'Returns'
+
+	partition fact_returns = entity
+		mode: directLake
+		source
+			entityName: fact_returns
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+

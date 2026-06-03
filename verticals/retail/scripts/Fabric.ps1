@@ -63,8 +63,9 @@ function Invoke-FabricRest {
     # Retry transient transport-level / 5xx / 429 errors. Fabric occasionally
     # returns 'unexpected EOF', SSL handshake failures, or 502/503/504 when the
     # front door is under load -- these are safe to retry. 4xx (other than 429)
-    # is not retried.
-    $maxAttempts = 5
+    # is not retried. 429s honor Retry-After or the "blocked by upstream service
+    # until: <UTC timestamp>" message, which can be many minutes out.
+    $maxAttempts = 8
     $resp = $null
     $errMsg = $null
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
@@ -87,6 +88,21 @@ function Invoke-FabricRest {
                 throw "Fabric API $Method $Path failed: $errMsg"
             }
             $delay = [int][Math]::Min(30, [Math]::Pow(2, $attempt))
+            if ($respStatus -eq 429) {
+                # Prefer server-supplied Retry-After (seconds)
+                $retryAfter = $null
+                try { $retryAfter = $_.Exception.Response.Headers.RetryAfter.Delta.TotalSeconds } catch {}
+                if ($retryAfter) { $delay = [int]$retryAfter }
+                # Fall back to parsing the "blocked by upstream service until: <UTC>" hint
+                elseif ($errMsg -match 'blocked by the upstream service until:\s*([^"]+?)\s*\(UTC\)') {
+                    try {
+                        $until = [datetime]::Parse($matches[1], [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+                        $secs = [int]([Math]::Ceiling(($until - [datetime]::UtcNow).TotalSeconds))
+                        if ($secs -gt 0) { $delay = [Math]::Min(600, $secs + 2) }
+                    } catch {}
+                }
+                else { $delay = [int][Math]::Min(120, 15 * $attempt) }
+            }
             Write-Host "  Fabric API $Method $Path transient error (attempt $attempt/$maxAttempts); retrying in ${delay}s: $($_.Exception.Message)" -ForegroundColor DarkYellow
             Start-Sleep -Seconds $delay
         }
@@ -321,7 +337,8 @@ function New-FabricNotebookFromFile {
         [Parameter(Mandatory)] [string]$Token,
         [Parameter(Mandatory)] [string]$WorkspaceId,
         [Parameter(Mandatory)] [string]$Name,
-        [Parameter(Mandatory)] [string]$NotebookPath
+        [Parameter(Mandatory)] [string]$NotebookPath,
+        [string]$FolderId
     )
     if (-not (Test-Path $NotebookPath)) {
         throw "Notebook file not found: $NotebookPath"
@@ -358,6 +375,7 @@ function New-FabricNotebookFromFile {
         displayName = $Name
         definition  = $definition
     }
+    if ($FolderId) { $body.folderId = $FolderId }
     $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/notebooks" -Body $body
     if ($r.Status -eq 202 -and $r.OperationLocation) {
         Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create notebook $Name" | Out-Null
@@ -477,7 +495,8 @@ function New-FabricDataPipelineFromFile {
         [Parameter(Mandatory)] [string]$WorkspaceId,
         [Parameter(Mandatory)] [string]$Name,
         [Parameter(Mandatory)] [string]$DefinitionPath,
-        [hashtable]$Replacements
+        [hashtable]$Replacements,
+        [string]$FolderId
     )
     if (-not (Test-Path $DefinitionPath)) {
         throw "Pipeline definition file not found: $DefinitionPath"
@@ -518,6 +537,7 @@ function New-FabricDataPipelineFromFile {
         displayName = $Name
         definition  = $definition
     }
+    if ($FolderId) { $body.folderId = $FolderId }
     $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/dataPipelines" -Body $body
     if ($r.Status -eq 202 -and $r.OperationLocation) {
         Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create pipeline $Name" | Out-Null
@@ -570,6 +590,56 @@ function Invoke-FabricDataPipeline {
 # -----------------------------------------------------------------------------
 # Mirrored Database (Azure SQL -> bronze lakehouse via change feed)
 # -----------------------------------------------------------------------------
+
+function New-FabricFolder {
+    <#
+    .SYNOPSIS
+        Creates a workspace folder (or returns existing) by displayName.
+        Idempotent: a second call with the same name returns the existing id.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$DisplayName,
+        [string]$ParentFolderId
+    )
+    $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/folders"
+    $existing = $list.Body.value | Where-Object {
+        $_.displayName -eq $DisplayName -and
+        (($ParentFolderId -and $_.parentFolderId -eq $ParentFolderId) -or (-not $ParentFolderId -and -not $_.parentFolderId))
+    } | Select-Object -First 1
+    if ($existing) { return $existing }
+    $body = @{ displayName = $DisplayName }
+    if ($ParentFolderId) { $body.parentFolderId = $ParentFolderId }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/folders" -Body $body
+    return $r.Body
+}
+
+function Move-FabricItemToFolder {
+    <#
+    .SYNOPSIS
+        Moves an item into a workspace folder (or to workspace root if FolderId
+        is empty). Idempotent: re-moving to current location is a no-op server-
+        side. Swallows ItemNotFound for items that were already deleted.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$ItemId,
+        [string]$FolderId
+    )
+    $body = @{}
+    if ($FolderId) { $body.targetFolderId = $FolderId }
+    try {
+        Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/items/$ItemId/move" -Body $body | Out-Null
+    } catch {
+        $msg = "$_"
+        if ($msg -match 'ItemNotFound') { Write-Verbose "Move skipped: item $ItemId not found." ; return }
+        throw
+    }
+}
 
 function Add-FabricWorkspaceRoleAssignment {
     <#
@@ -642,280 +712,6 @@ function Enable-FabricWorkspaceIdentity {
         applicationId        = $ws.workspaceIdentity.applicationId
         servicePrincipalId   = $ws.workspaceIdentity.servicePrincipalId
         displayName          = $ws.displayName  # what T-SQL CREATE USER FROM EXTERNAL PROVIDER sees
-    }
-}
-
-function Grant-FabricServicePrincipalApiAccess {
-    <#
-    .SYNOPSIS
-        Ensures a service principal is allowed to call Fabric public APIs by
-        configuring the "Service principals can call Fabric public APIs"
-        tenant setting (settingName = ServicePrincipalAccessPermissionAPIs)
-        and adding the SP to the security group the setting points at.
-    .DESCRIPTION
-        The tenant setting can be in one of three states:
-          1. enabled + at least one enabledSecurityGroup
-             -> add the SP to the FIRST listed group.
-          2. enabled + no groups (effectively nobody)
-             -> ensure $GroupDisplayName exists, add SP to it, update setting
-                to scope to that group.
-          3. disabled
-             -> ensure $GroupDisplayName exists, add SP, enable setting
-                scoped to that group.
-        Requires the caller to be a Fabric tenant admin AND have Entra
-        permissions to read/create groups and add members (Group.ReadWrite.All
-        or equivalent role like Groups Administrator).
-    .OUTPUTS
-        Hashtable: @{ groupId; groupName; groupCreated; memberAdded;
-                      settingUpdated; settingPreviouslyEnabled }
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$Token,                # Fabric admin token
-        [Parameter(Mandatory)] [string]$ServicePrincipalId,   # Entra SP objectId (NOT appId)
-        [Parameter(Mandatory)] [string]$GroupDisplayName      # group to create/use if needed
-    )
-
-    $settingName = 'ServicePrincipalAccessPermissionAPIs'
-    $setting = (Invoke-FabricRest -Token $Token -Method GET -Path "/admin/tenantsettings").Body.value |
-        Where-Object { $_.settingName -eq $settingName } |
-        Select-Object -First 1
-    if (-not $setting) { throw "Tenant setting '$settingName' not found. Are you a Fabric admin?" }
-
-    $existingGroups = @()
-    if ($setting.enabledSecurityGroups) { $existingGroups = @($setting.enabledSecurityGroups) }
-    Write-Host ("    setting '{0}': enabled={1} groupsConfigured={2}" -f `
-        $setting.title, $setting.enabled, $existingGroups.Count) -ForegroundColor DarkGray
-
-    $groupCreated = $false
-    $fellBackToOwnGroup = $false
-    if ($existingGroups.Count -gt 0) {
-        $existing = $existingGroups[0]
-        $group = @{ id = $existing.graphId; displayName = $existing.name }
-        Write-Host ("    using existing group '{0}' ({1})" -f $group.displayName, $group.id) -ForegroundColor DarkGray
-    } else {
-        $found = Find-EntraSecurityGroup -DisplayName $GroupDisplayName
-        if ($found) {
-            $group = $found
-            Write-Host ("    found existing group '{0}' ({1}) (not yet attached to setting)" -f $group.displayName, $group.id) -ForegroundColor DarkGray
-        } else {
-            Write-Host ("    creating Entra security group '{0}'" -f $GroupDisplayName) -ForegroundColor DarkGray
-            $group = New-EntraSecurityGroup -DisplayName $GroupDisplayName
-            $groupCreated = $true
-            Write-Host ("    created group id={0}" -f $group.id) -ForegroundColor DarkGray
-        }
-    }
-
-    Write-Host ("    adding service principal {0} as member of '{1}'" -f $ServicePrincipalId, $group.displayName) -ForegroundColor DarkGray
-    $memberAdded = $false
-    try {
-        $memberAdded = Add-EntraGroupMember -GroupId $group.id -MemberObjectId $ServicePrincipalId
-        if ($memberAdded) {
-            Write-Host '    member added' -ForegroundColor DarkGray
-        } else {
-            Write-Host '    already a member' -ForegroundColor DarkGray
-        }
-    } catch {
-        # Most likely the caller is not an owner of the pre-existing group.
-        # Fall back: create our own group (which we'll own), add the SP, and
-        # attach the new group to the tenant setting *in addition to* the
-        # existing one(s).
-        if ($_.Exception.Message -match '403|Forbidden|Authorization|Insufficient privileges') {
-            Write-Host ("    cannot add member to '{0}' (no admin rights). Falling back to a self-owned group." -f $group.displayName) -ForegroundColor Yellow
-            Write-Host ("    creating Entra security group '{0}'" -f $GroupDisplayName) -ForegroundColor DarkGray
-            $group = New-EntraSecurityGroup -DisplayName $GroupDisplayName
-            $groupCreated = $true
-            $fellBackToOwnGroup = $true
-            Write-Host ("    created group id={0}" -f $group.id) -ForegroundColor DarkGray
-            $memberAdded = Add-EntraGroupMember -GroupId $group.id -MemberObjectId $ServicePrincipalId
-            Write-Host '    member added' -ForegroundColor DarkGray
-        } else {
-            throw
-        }
-    }
-
-    $alreadyAttached = $existingGroups | Where-Object { $_.graphId -eq $group.id }
-    $needsUpdate = (-not $setting.enabled) -or (-not $alreadyAttached)
-    if ($needsUpdate) {
-        # Build the new group list. Filter out any null/empty entries that the
-        # API will reject with a 400 BadRequest. Preserve existing groups
-        # (especially important in the fallback case where we're adding our
-        # own group alongside the pre-existing one we couldn't write to).
-        $newGroups = @()
-        foreach ($g in $existingGroups) {
-            if ($g -and $g.graphId) { $newGroups += @{ graphId = $g.graphId; name = $g.name } }
-        }
-        if (-not ($newGroups | Where-Object { $_.graphId -eq $group.id })) {
-            $newGroups += @{ graphId = $group.id; name = $group.displayName }
-        }
-        $body = @{
-            enabled               = $true
-            enabledSecurityGroups = $newGroups
-        }
-        Write-Host "    updating tenant setting (enabled=true, scoping to $($newGroups.Count) group(s))" -ForegroundColor DarkGray
-        # Brand-new Entra groups can take ~30-120s to replicate into Fabric's
-        # admin directory. Posting the update too early returns 400 BadRequest
-        # because Fabric can't resolve the group's graphId yet. In practice
-        # the first attempt has never succeeded, so wait 10s up front.
-        if ($groupCreated) {
-            Write-Host '    waiting 10s for new group to replicate into Fabric admin directory' -ForegroundColor DarkGray
-            Start-Sleep -Seconds 10
-        }
-        $maxAttempts = 12
-        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-            try {
-                Invoke-FabricRest -Token $Token -Method POST -Path "/admin/tenantsettings/$settingName/update" -Body $body | Out-Null
-                if ($attempt -gt 1) { Write-Host "    update succeeded on attempt $attempt" -ForegroundColor DarkGray }
-                break
-            } catch {
-                if ($attempt -eq $maxAttempts) { throw }
-                if ($_.Exception.Message -match '400|BadRequest') {
-                    Write-Host "    update returned 400 (group likely not yet replicated to Fabric); waiting 10s (attempt $attempt/$maxAttempts)" -ForegroundColor DarkGray
-                    Start-Sleep -Seconds 10
-                } else {
-                    throw
-                }
-            }
-        }
-    } else {
-        Write-Host '    tenant setting already correctly configured' -ForegroundColor DarkGray
-    }
-
-    return @{
-        groupId                  = $group.id
-        groupName                = $group.displayName
-        groupCreated             = $groupCreated
-        memberAdded              = $memberAdded
-        settingUpdated           = $needsUpdate
-        settingPreviouslyEnabled = [bool]$setting.enabled
-        fellBackToOwnGroup       = $fellBackToOwnGroup
-    }
-}
-
-function Get-GraphToken {
-    $json = az account get-access-token --resource 'https://graph.microsoft.com' --output json 2>$null
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) {
-        throw "Failed to obtain Microsoft Graph access token. Are you logged in (az login)?"
-    }
-    return ($json | ConvertFrom-Json).accessToken
-}
-
-function Invoke-GraphRest {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [ValidateSet('GET','POST','PATCH','PUT','DELETE')] [string]$Method,
-        [Parameter(Mandatory)] [string]$Path,
-        [object]$Body
-    )
-    $token = Get-GraphToken
-    $uri = if ($Path.StartsWith('http')) { $Path } else { "https://graph.microsoft.com/v1.0/$($Path.TrimStart('/'))" }
-    $headers = @{ Authorization = "Bearer $token"; 'Content-Type' = 'application/json' }
-    $params = @{ Method = $Method; Uri = $uri; Headers = $headers; ErrorAction = 'Stop' }
-    if ($null -ne $Body) { $params.Body = ($Body | ConvertTo-Json -Depth 20 -Compress) }
-    try { return Invoke-RestMethod @params }
-    catch {
-        $msg = $_.Exception.Message
-        if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $msg += "`nResponse: $($_.ErrorDetails.Message)" }
-        throw "Graph $Method $Path failed: $msg"
-    }
-}
-
-function Find-EntraSecurityGroup {
-    <#
-    .SYNOPSIS
-        Returns @{ id; displayName } for a security group by displayName, or
-        $null if not found.
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)] [string]$DisplayName)
-
-    $escaped = $DisplayName.Replace("'", "''")
-    $existing = (Invoke-GraphRest -Method GET -Path "groups?`$filter=displayName eq '$escaped'&`$select=id,displayName").value
-    if ($existing -and $existing.Count -gt 0) {
-        return @{ id = $existing[0].id; displayName = $existing[0].displayName }
-    }
-    return $null
-}
-
-function New-EntraSecurityGroup {
-    <#
-    .SYNOPSIS
-        Creates a non-mail-enabled security group.
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)] [string]$DisplayName)
-
-    $mailNick = ($DisplayName -replace '[^a-zA-Z0-9]', '').ToLower()
-    if (-not $mailNick) { $mailNick = 'fabricgroup' }
-    $body = @{
-        displayName     = $DisplayName
-        description     = 'Auto-created by Contoso retail deploy.ps1. Membership grants the listed service principals access to Fabric public APIs via the ServicePrincipalAccessPermissionAPIs tenant setting.'
-        mailEnabled     = $false
-        mailNickname    = $mailNick
-        securityEnabled = $true
-    }
-    $created = Invoke-GraphRest -Method POST -Path 'groups' -Body $body
-    return @{ id = $created.id; displayName = $created.displayName }
-}
-
-function Remove-EntraGroupMember {
-    <#
-    .SYNOPSIS
-        Idempotent: removes a directoryObject from a security group. Returns
-        $true if removed, $false if it wasn't a member.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$GroupId,
-        [Parameter(Mandatory)] [string]$MemberObjectId
-    )
-    try {
-        Invoke-GraphRest -Method DELETE -Path "groups/$GroupId/members/$MemberObjectId/`$ref" | Out-Null
-        return $true
-    } catch {
-        if ($_.Exception.Message -match '404|Not.?Found|does not exist') { return $false }
-        throw
-    }
-}
-
-function Remove-EntraSecurityGroup {
-    <#
-    .SYNOPSIS
-        Idempotent: deletes an Entra security group by id. Returns $true if
-        deleted, $false if it didn't exist.
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)] [string]$GroupId)
-    try {
-        Invoke-GraphRest -Method DELETE -Path "groups/$GroupId" | Out-Null
-        return $true
-    } catch {
-        if ($_.Exception.Message -match '404|Not.?Found|does not exist') { return $false }
-        throw
-    }
-}
-
-function Add-EntraGroupMember {
-    <#
-    .SYNOPSIS
-        Idempotent: adds a directoryObject (user / service principal) to a
-        security group. Returns $true if added, $false if already a member.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$GroupId,
-        [Parameter(Mandatory)] [string]$MemberObjectId
-    )
-    try {
-        Invoke-GraphRest -Method POST -Path "groups/$GroupId/members/`$ref" -Body @{
-            '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$MemberObjectId"
-        } | Out-Null
-        return $true
-    } catch {
-        if ($_.Exception.Message -match 'already exist|object references already exist|One or more added object references already exist') {
-            return $false
-        }
-        throw
     }
 }
 
@@ -1069,61 +865,6 @@ function New-FabricMirroredAzureSqlDatabase {
 # -----------------------------------------------------------------------------
 # OneLake Shortcut (ADLS Gen2 -> bronze lakehouse Files area)
 # -----------------------------------------------------------------------------
-
-function New-FabricPipelineConnection {
-    <#
-    .SYNOPSIS
-        Creates a Fabric cloud connection of type FabricDataPipelines that
-        authenticates via WorkspaceIdentity. Used by the InvokePipeline
-        activity to invoke a pipeline that lives in a different workspace
-        than the parent pipeline.
-    .DESCRIPTION
-        The connection itself is not bound to a specific workspace identity;
-        at runtime the connection authenticates as the workspace identity of
-        the workspace the parent pipeline is running in. That workspace must
-        therefore (a) have its workspace identity provisioned, and (b) be
-        granted at least Contributor on every target workspace it invokes
-        into.
-
-        Idempotent on $DisplayName: if a connection with that name already
-        exists, returns its id.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)] [string]$Token,
-        [Parameter(Mandatory)] [string]$DisplayName
-    )
-
-    $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/connections").Body
-    $existing = $list.value | Where-Object { $_.displayName -eq $DisplayName } | Select-Object -First 1
-    if ($existing) { return $existing }
-
-    $body = @{
-        connectivityType  = 'ShareableCloud'
-        displayName       = $DisplayName
-        connectionDetails = @{
-            type           = 'FabricDataPipelines'
-            creationMethod = 'FabricDataPipelines.Actions'
-            parameters     = @()
-        }
-        privacyLevel      = 'Organizational'
-        credentialDetails = @{
-            singleSignOnType     = 'None'
-            connectionEncryption = 'NotEncrypted'
-            credentials          = @{
-                credentialType = 'WorkspaceIdentity'
-            }
-        }
-    }
-
-    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/connections" -Body $body
-    if ($r.Status -eq 202 -and $r.OperationLocation) {
-        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create pipeline connection $DisplayName" | Out-Null
-        $list = (Invoke-FabricRest -Token $Token -Method GET -Path "/connections").Body
-        return $list.value | Where-Object { $_.displayName -eq $DisplayName } | Select-Object -First 1
-    }
-    return $r.Body
-}
 
 function New-FabricAdlsGen2Connection {
     <#
@@ -1608,4 +1349,257 @@ function Get-FabricEventstreamSourceConnectionString {
         throw "Source connection response missing accessKeys.primaryConnectionString"
     }
     return $r.accessKeys.primaryConnectionString
+}
+
+# -----------------------------------------------------------------------------
+# Semantic Models (TMDL)
+# -----------------------------------------------------------------------------
+
+function New-FabricSemanticModel {
+    <#
+    .SYNOPSIS
+        Creates (or updates) a Fabric Semantic Model from a local TMDL
+        definition folder (.platform + definition.pbism + definition/*.tmdl).
+    .DESCRIPTION
+        Walks $DefinitionRoot, base64-encodes every file (except .platform,
+        which is git-integration metadata only), applies optional text
+        $Replacements to .tmdl / .pbism payloads, and POSTs as a Fabric
+        Semantic Model item. Idempotent: if a model with the same name
+        already exists in the workspace, its definition is updated in place.
+    .PARAMETER DefinitionRoot
+        Local folder containing the model project (e.g. sm_retail_sales/).
+        Must contain definition/ subfolder with database.tmdl + model.tmdl.
+    .PARAMETER Replacements
+        Hashtable of literal token -> value pairs applied to each text part
+        before upload. Used to inject the warehouse SQL endpoint + db name.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$DefinitionRoot,
+        [hashtable]$Replacements,
+        [string]$FolderId
+    )
+    if (-not (Test-Path $DefinitionRoot)) {
+        throw "Semantic model definition root not found: $DefinitionRoot"
+    }
+
+    $rootFull = (Resolve-Path $DefinitionRoot).Path
+    $files = Get-ChildItem -Path $rootFull -Recurse -File |
+        Where-Object { $_.Name -ne '.platform' }
+
+    $parts = @()
+    foreach ($f in $files) {
+        $rel = $f.FullName.Substring($rootFull.Length).TrimStart('\','/').Replace('\','/')
+        $isText = $f.Extension -in @('.tmdl', '.pbism', '.json')
+        if ($isText) {
+            $text = Get-Content -Raw -Path $f.FullName
+            if ($Replacements) {
+                foreach ($k in $Replacements.Keys) {
+                    $text = $text.Replace($k, [string]$Replacements[$k])
+                }
+            }
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+        } else {
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+        }
+        $parts += @{
+            path        = $rel
+            payload     = [Convert]::ToBase64String($bytes)
+            payloadType = 'InlineBase64'
+        }
+    }
+
+    $definition = @{ parts = $parts }
+
+    $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/semanticModels"
+    $existing = $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+
+    if ($existing) {
+        Write-Verbose "Semantic model '$Name' exists (id=$($existing.id)); updating definition."
+        $body = @{ definition = $definition }
+        $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/semanticModels/$($existing.id)/updateDefinition" -Body $body
+        if ($r.Status -eq 202 -and $r.OperationLocation) {
+            Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "update semantic model $Name" | Out-Null
+        }
+        return $existing
+    }
+
+    $body = @{
+        displayName = $Name
+        definition  = $definition
+    }
+    if ($FolderId) { $body.folderId = $FolderId }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/semanticModels" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create semantic model $Name" | Out-Null
+        $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/semanticModels"
+        return $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    }
+    return $r.Body
+}
+
+
+
+
+function New-FabricReport {
+    <#
+    .SYNOPSIS
+        Creates (or updates) a Fabric Report from a local PBIR-Legacy definition
+        folder (.platform + definition.pbir + report.json).
+    .DESCRIPTION
+        Same upload pattern as New-FabricSemanticModel: walks $DefinitionRoot,
+        base64-encodes every file (skipping .platform), applies optional text
+        $Replacements to text payloads, and POSTs as a Fabric Report item.
+        Idempotent against report display name. Use $Replacements to inject
+        __SEMANTIC_MODEL_ID__ into definition.pbir.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$DefinitionRoot,
+        [hashtable]$Replacements,
+        [string]$FolderId
+    )
+    if (-not (Test-Path $DefinitionRoot)) {
+        throw "Report definition root not found: $DefinitionRoot"
+    }
+
+    $rootFull = (Resolve-Path $DefinitionRoot).Path
+    $files = Get-ChildItem -Path $rootFull -Recurse -File |
+        Where-Object { $_.Name -ne '.platform' }
+
+    $parts = @()
+    foreach ($f in $files) {
+        $rel = $f.FullName.Substring($rootFull.Length).TrimStart('\','/').Replace('\','/')
+        $isText = $f.Extension -in @('.pbir', '.json')
+        if ($isText) {
+            $text = Get-Content -Raw -Path $f.FullName
+            if ($Replacements) {
+                foreach ($k in $Replacements.Keys) {
+                    $text = $text.Replace($k, [string]$Replacements[$k])
+                }
+            }
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+        } else {
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+        }
+        $parts += @{
+            path        = $rel
+            payload     = [Convert]::ToBase64String($bytes)
+            payloadType = 'InlineBase64'
+        }
+    }
+
+    $definition = @{ parts = $parts }
+
+    $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/reports"
+    $existing = $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+
+    if ($existing) {
+        Write-Verbose "Report '$Name' exists (id=$($existing.id)); updating definition."
+        $body = @{ definition = $definition }
+        $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/reports/$($existing.id)/updateDefinition" -Body $body
+        if ($r.Status -eq 202 -and $r.OperationLocation) {
+            Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "update report $Name" | Out-Null
+        }
+        return $existing
+    }
+
+    $body = @{
+        displayName = $Name
+        definition  = $definition
+    }
+    if ($FolderId) { $body.folderId = $FolderId }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/reports" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create report $Name" | Out-Null
+        $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/reports"
+        return $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    }
+    return $r.Body
+}
+
+function New-FabricReport {
+    <#
+    .SYNOPSIS
+        Creates (or updates) a Fabric Report from a local PBIR-Legacy definition
+        folder (.platform + definition.pbir + report.json).
+    .DESCRIPTION
+        Same upload pattern as New-FabricSemanticModel: walks $DefinitionRoot,
+        base64-encodes every file (skipping .platform), applies optional text
+        $Replacements to text payloads, and POSTs as a Fabric Report item.
+        Idempotent against report display name. Use $Replacements to inject
+        __SEMANTIC_MODEL_ID__ into definition.pbir.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$DefinitionRoot,
+        [hashtable]$Replacements,
+        [string]$FolderId
+    )
+    if (-not (Test-Path $DefinitionRoot)) {
+        throw "Report definition root not found: $DefinitionRoot"
+    }
+
+    $rootFull = (Resolve-Path $DefinitionRoot).Path
+    $files = Get-ChildItem -Path $rootFull -Recurse -File |
+        Where-Object { $_.Name -ne '.platform' }
+
+    $parts = @()
+    foreach ($f in $files) {
+        $rel = $f.FullName.Substring($rootFull.Length).TrimStart('\','/').Replace('\','/')
+        $isText = $f.Extension -in @('.pbir', '.json')
+        if ($isText) {
+            $text = Get-Content -Raw -Path $f.FullName
+            if ($Replacements) {
+                foreach ($k in $Replacements.Keys) {
+                    $text = $text.Replace($k, [string]$Replacements[$k])
+                }
+            }
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+        } else {
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+        }
+        $parts += @{
+            path        = $rel
+            payload     = [Convert]::ToBase64String($bytes)
+            payloadType = 'InlineBase64'
+        }
+    }
+
+    $definition = @{ parts = $parts }
+
+    $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/reports"
+    $existing = $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+
+    if ($existing) {
+        Write-Verbose "Report '$Name' exists (id=$($existing.id)); updating definition."
+        $body = @{ definition = $definition }
+        $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/reports/$($existing.id)/updateDefinition" -Body $body
+        if ($r.Status -eq 202 -and $r.OperationLocation) {
+            Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "update report $Name" | Out-Null
+        }
+        return $existing
+    }
+
+    $body = @{
+        displayName = $Name
+        definition  = $definition
+    }
+    if ($FolderId) { $body.folderId = $FolderId }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/reports" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create report $Name" | Out-Null
+        $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/reports"
+        return $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    }
+    return $r.Body
 }

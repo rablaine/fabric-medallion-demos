@@ -1,0 +1,108 @@
+/// Store / location dimension.
+table dim_store
+	lineageTag: aa000023-0000-0000-0000-000000000001
+
+	column 'Store ID'
+		dataType: int64
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: store_id
+		lineageTag: aa000023-0000-0000-0000-000000000002
+		isKey
+
+	column 'Store Name'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_name
+		lineageTag: aa000023-0000-0000-0000-000000000003
+
+	column 'Store Type'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_type
+		lineageTag: aa000023-0000-0000-0000-000000000004
+
+	column City
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_city
+		lineageTag: aa000023-0000-0000-0000-000000000005
+		dataCategory: City
+		displayFolder: Location
+
+	column State
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_state
+		lineageTag: aa000023-0000-0000-0000-000000000006
+		dataCategory: 'State or Province'
+		displayFolder: Location
+
+	column Country
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_country
+		lineageTag: aa000023-0000-0000-0000-000000000007
+		dataCategory: Country
+		displayFolder: Location
+
+	column Region
+		dataType: string
+		summarizeBy: none
+		sourceColumn: store_region
+		lineageTag: aa000023-0000-0000-0000-000000000008
+		displayFolder: Location
+
+	column Latitude
+		dataType: decimal
+		formatString: '0.000000'
+		summarizeBy: none
+		sourceColumn: latitude
+		lineageTag: aa000023-0000-0000-0000-000000000009
+		dataCategory: Latitude
+		displayFolder: Location
+
+	column Longitude
+		dataType: decimal
+		formatString: '0.000000'
+		summarizeBy: none
+		sourceColumn: longitude
+		lineageTag: aa000023-0000-0000-0000-00000000000a
+		dataCategory: Longitude
+		displayFolder: Location
+
+	column 'Square Feet'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: sum
+		sourceColumn: square_feet
+		lineageTag: aa000023-0000-0000-0000-00000000000b
+		displayFolder: Attributes
+
+	column 'Opened Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: opened_at
+		lineageTag: aa000023-0000-0000-0000-00000000000c
+		displayFolder: Attributes
+
+	measure 'Store Count' = DISTINCTCOUNT('dim_store'[Store ID])
+		formatString: '#,0'
+		lineageTag: aa000023-0000-0000-0000-000000000100
+		displayFolder: 'Footprint'
+
+	measure 'Total Square Feet' = SUM('dim_store'[Square Feet])
+		formatString: '#,0'
+		lineageTag: aa000023-0000-0000-0000-000000000101
+		displayFolder: 'Footprint'
+
+	partition dim_store = entity
+		mode: directLake
+		source
+			entityName: dim_store
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+

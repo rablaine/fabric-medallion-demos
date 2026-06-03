@@ -1,0 +1,327 @@
+/// Employee dimension. Hire/termination dates power headcount/attrition measures. Row per current employee state.
+table dim_employee
+	lineageTag: bb000022-0000-0000-0000-000000000001
+
+	column 'Employee ID'
+		dataType: int64
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: employee_id
+		lineageTag: bb000022-0000-0000-0000-000000000002
+		isKey
+
+	column 'Full Name'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: full_name
+		lineageTag: bb000022-0000-0000-0000-000000000003
+
+	column Email
+		dataType: string
+		summarizeBy: none
+		sourceColumn: email
+		lineageTag: bb000022-0000-0000-0000-000000000004
+		dataCategory: EmailAddress
+
+	column Title
+		dataType: string
+		summarizeBy: none
+		sourceColumn: title
+		lineageTag: bb000022-0000-0000-0000-000000000005
+		displayFolder: Job
+
+	column Department
+		dataType: string
+		summarizeBy: none
+		sourceColumn: department
+		lineageTag: bb000022-0000-0000-0000-000000000006
+		displayFolder: Job
+
+	column Level
+		dataType: string
+		summarizeBy: none
+		sourceColumn: level
+		lineageTag: bb000022-0000-0000-0000-000000000007
+		displayFolder: Job
+
+	column 'Store ID'
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: store_id
+		lineageTag: bb000022-0000-0000-0000-000000000008
+
+	column 'Is HQ'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_hq
+		lineageTag: bb000022-0000-0000-0000-000000000009
+		displayFolder: Job
+
+	column 'Manager Name'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: manager_name
+		lineageTag: bb000022-0000-0000-0000-00000000000a
+		displayFolder: Org
+
+	column 'Manager Title'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: manager_title
+		lineageTag: bb000022-0000-0000-0000-00000000000b
+		displayFolder: Org
+
+	column 'Hire Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: hire_date
+		lineageTag: bb000022-0000-0000-0000-00000000000c
+		displayFolder: Lifecycle
+
+	column 'Termination Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: termination_date
+		lineageTag: bb000022-0000-0000-0000-00000000000d
+		displayFolder: Lifecycle
+
+	column 'Is Active'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_active
+		lineageTag: bb000022-0000-0000-0000-00000000000e
+		displayFolder: Lifecycle
+
+	column 'Is Terminated'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_terminated
+		lineageTag: bb000022-0000-0000-0000-00000000000f
+		displayFolder: Lifecycle
+
+	column 'Tenure Days'
+		dataType: int64
+		isHidden
+		formatString: '#,0'
+		summarizeBy: none
+		sourceColumn: tenure_days
+		lineageTag: bb000022-0000-0000-0000-000000000010
+
+	column 'Tenure Years'
+		dataType: decimal
+		formatString: '0.0'
+		summarizeBy: none
+		sourceColumn: tenure_years
+		lineageTag: bb000022-0000-0000-0000-000000000011
+		displayFolder: Lifecycle
+
+	column Age
+		dataType: int64
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: age
+		lineageTag: bb000022-0000-0000-0000-000000000012
+		displayFolder: Demographics
+
+	column 'Age Band'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: age_band
+		lineageTag: bb000022-0000-0000-0000-000000000013
+		displayFolder: Demographics
+
+	column Gender
+		dataType: string
+		summarizeBy: none
+		sourceColumn: gender
+		lineageTag: bb000022-0000-0000-0000-000000000014
+		displayFolder: Demographics
+
+	column 'Annual Salary'
+		dataType: decimal
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		summarizeBy: none
+		sourceColumn: annual_salary
+		lineageTag: bb000022-0000-0000-0000-000000000015
+		displayFolder: Compensation
+
+	column 'Salary Band'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: salary_band
+		lineageTag: bb000022-0000-0000-0000-000000000016
+		displayFolder: Compensation
+
+
+
+
+
+	/// Employees on the books as of MAX(dim_date[Date]). Returns total active if no date filter is applied.
+	measure 'Active Headcount' = ```
+			VAR _asOf = MAX('dim_date'[Date])
+			RETURN
+			CALCULATE(
+				COUNTROWS('dim_employee'),
+				'dim_employee'[Hire Date] <= _asOf,
+				FILTER(
+					'dim_employee',
+					ISBLANK('dim_employee'[Termination Date]) || 'dim_employee'[Termination Date] > _asOf
+				)
+			)
+			```
+		formatString: '#,0'
+		lineageTag: bb000022-0000-0000-0000-000000000100
+		displayFolder: 'Headcount'
+
+	/// Alias for Active Headcount. (No part-time flag in source today; reserved for future FTE % column.)
+	measure FTE = [Active Headcount]
+		formatString: '#,0'
+		lineageTag: bb000022-0000-0000-0000-000000000101
+		displayFolder: 'Headcount'
+
+	/// Employees whose hire_date falls inside the selected date range.
+	measure Hires = ```
+			VAR _start = MIN('dim_date'[Date])
+			VAR _end   = MAX('dim_date'[Date])
+			RETURN
+			CALCULATE(
+				COUNTROWS('dim_employee'),
+				ALL('dim_date'),
+				'dim_employee'[Hire Date] >= _start,
+				'dim_employee'[Hire Date] <= _end
+			)
+			```
+		formatString: '#,0'
+		lineageTag: bb000022-0000-0000-0000-000000000102
+		displayFolder: 'Movement'
+
+	/// Employees whose termination_date falls inside the selected date range.
+	measure Terminations = ```
+			VAR _start = MIN('dim_date'[Date])
+			VAR _end   = MAX('dim_date'[Date])
+			RETURN
+			CALCULATE(
+				COUNTROWS('dim_employee'),
+				ALL('dim_date'),
+				NOT ISBLANK('dim_employee'[Termination Date]),
+				'dim_employee'[Termination Date] >= _start,
+				'dim_employee'[Termination Date] <= _end
+			)
+			```
+		formatString: '#,0'
+		lineageTag: bb000022-0000-0000-0000-000000000103
+		displayFolder: 'Movement'
+
+	/// Hires minus terminations for the selected period.
+	measure 'Net Change' = [Hires] - [Terminations]
+		formatString: '+#,0;-#,0;0'
+		lineageTag: bb000022-0000-0000-0000-000000000104
+		displayFolder: 'Movement'
+
+	/// Trailing 12-month terminations divided by average headcount across the period.
+	measure 'Attrition % (Rolling 12m)' = ```
+			VAR _end   = MAX('dim_date'[Date])
+			VAR _start = EDATE(_end, -12) + 1
+			VAR _terms = CALCULATE(
+				COUNTROWS('dim_employee'),
+				ALL('dim_date'),
+				NOT ISBLANK('dim_employee'[Termination Date]),
+				'dim_employee'[Termination Date] >= _start,
+				'dim_employee'[Termination Date] <= _end
+			)
+			VAR _avgHc = DIVIDE(
+				CALCULATE(COUNTROWS('dim_employee'), 'dim_employee'[Hire Date] <= _end, FILTER('dim_employee', ISBLANK('dim_employee'[Termination Date]) || 'dim_employee'[Termination Date] > _end))
+				+ CALCULATE(COUNTROWS('dim_employee'), 'dim_employee'[Hire Date] <= _start, FILTER('dim_employee', ISBLANK('dim_employee'[Termination Date]) || 'dim_employee'[Termination Date] > _start)),
+				2
+			)
+			RETURN DIVIDE(_terms, _avgHc)
+			```
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: bb000022-0000-0000-0000-000000000105
+		displayFolder: 'Movement'
+
+	/// Average tenure in years across currently active employees.
+	measure 'Avg Tenure (yrs)' = ```
+			CALCULATE(
+				AVERAGE('dim_employee'[Tenure Years]),
+				'dim_employee'[Is Active] = TRUE
+			)
+			```
+		formatString: '0.0'
+		lineageTag: bb000022-0000-0000-0000-000000000106
+		displayFolder: 'Tenure'
+
+	/// Share of active employees with less than one year of tenure.
+	measure '< 1yr %' = ```
+			VAR _short = CALCULATE(COUNTROWS('dim_employee'), 'dim_employee'[Tenure Years] < 1, 'dim_employee'[Is Active] = TRUE)
+			VAR _all   = CALCULATE(COUNTROWS('dim_employee'), 'dim_employee'[Is Active] = TRUE)
+			RETURN DIVIDE(_short, _all)
+			```
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: bb000022-0000-0000-0000-000000000107
+		displayFolder: 'Tenure'
+
+	/// Share of active employees with five or more years of tenure.
+	measure '> 5yr %' = ```
+			VAR _long = CALCULATE(COUNTROWS('dim_employee'), 'dim_employee'[Tenure Years] >= 5, 'dim_employee'[Is Active] = TRUE)
+			VAR _all  = CALCULATE(COUNTROWS('dim_employee'), 'dim_employee'[Is Active] = TRUE)
+			RETURN DIVIDE(_long, _all)
+			```
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: bb000022-0000-0000-0000-000000000108
+		displayFolder: 'Tenure'
+
+	/// Sum of annual salaries across currently active employees (annualised payroll snapshot).
+	measure 'Total Payroll' = ```
+			CALCULATE(SUM('dim_employee'[Annual Salary]), 'dim_employee'[Is Active] = TRUE)
+			```
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: bb000022-0000-0000-0000-000000000109
+		displayFolder: 'Compensation'
+
+	/// Average annual salary across currently active employees.
+	measure 'Avg Salary' = ```
+			CALCULATE(AVERAGE('dim_employee'[Annual Salary]), 'dim_employee'[Is Active] = TRUE)
+			```
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: bb000022-0000-0000-0000-00000000010a
+		displayFolder: 'Compensation'
+
+	/// Distinct managers referenced by active reporting lines.
+	measure 'Manager Count' = ```
+			CALCULATE(
+				DISTINCTCOUNT('dim_employee'[Manager Name]),
+				NOT ISBLANK('dim_employee'[Manager Name])
+			)
+			```
+		formatString: '#,0'
+		lineageTag: bb000022-0000-0000-0000-00000000010b
+		displayFolder: 'Org'
+
+	/// Average number of direct reports per manager (active employees with a manager assigned).
+	measure 'Avg Span of Control' = ```
+			DIVIDE(
+				CALCULATE(COUNTROWS('dim_employee'), 'dim_employee'[Is Active] = TRUE, NOT ISBLANK('dim_employee'[Manager Name])),
+				[Manager Count]
+			)
+			```
+		formatString: '0.0'
+		lineageTag: bb000022-0000-0000-0000-00000000010c
+		displayFolder: 'Org'
+
+	partition dim_employee = entity
+		mode: directLake
+		source
+			entityName: dim_employee
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+
