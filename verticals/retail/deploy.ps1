@@ -1692,6 +1692,18 @@ $fullIncPl = New-FabricDataPipelineFromFile `
 Write-Ok "  pipeline id=$($fullIncPl.id)"
 
 # -----------------------------------------------------------------------------
+# Gold workspace folders: Retail / HR. Keeps the workspace tidy as the number
+# of semantic models, reports, and data agents grows. Datastores
+# (warehouse, lakehouse, SQLEndpoint) stay at root.
+# -----------------------------------------------------------------------------
+Write-Step "Creating gold workspace folders (Retail / HR)"
+$goldFolders = @{}
+$goldFolders['Retail'] = (New-FabricFolder -Token $fabricToken -WorkspaceId $workspaces['3-gold'].id -DisplayName 'Retail').id
+Write-Ok "  gold/Retail = $($goldFolders['Retail'])"
+$goldFolders['HR']     = (New-FabricFolder -Token $fabricToken -WorkspaceId $workspaces['3-gold'].id -DisplayName 'HR').id
+Write-Ok "  gold/HR     = $($goldFolders['HR'])"
+
+# -----------------------------------------------------------------------------
 # Semantic models (TMDL, DirectLake on the gold warehouse)
 # Split intentionally: Retail Sales (orders/sales/payments/etc.) vs.
 # HR & Workforce (dim_employee). Separate audiences, separate RLS surfaces,
@@ -1708,7 +1720,8 @@ $smRetail = New-FabricSemanticModel `
     -WorkspaceId $workspaces['3-gold'].id `
     -Name 'Retail Sales' `
     -DefinitionRoot (Join-Path $smRoot 'sm_retail_sales') `
-    -Replacements $smSubs
+    -Replacements $smSubs `
+    -FolderId $goldFolders['Retail']
 Write-Ok "  id=$($smRetail.id)"
 
 Write-Step "Creating semantic model 'HR & Workforce' in gold workspace"
@@ -1717,7 +1730,8 @@ $smHr = New-FabricSemanticModel `
     -WorkspaceId $workspaces['3-gold'].id `
     -Name 'HR & Workforce' `
     -DefinitionRoot (Join-Path $smRoot 'sm_hr_workforce') `
-    -Replacements $smSubs
+    -Replacements $smSubs `
+    -FolderId $goldFolders['HR']
 Write-Ok "  id=$($smHr.id)"
 
 # -----------------------------------------------------------------------------
@@ -1726,10 +1740,10 @@ Write-Ok "  id=$($smHr.id)"
 # -----------------------------------------------------------------------------
 $reportsRoot = Join-Path $PSScriptRoot 'fabric' 'reports'
 $reports = @(
-    @{ slug='rpt_sales_overview';   name='Retail - Sales Overview';     smId=$smRetail.id }
-    @{ slug='rpt_sales_operations'; name='Retail - Operations';         smId=$smRetail.id }
-    @{ slug='rpt_hr_workforce';     name='HR - Workforce Overview';     smId=$smHr.id     }
-    @{ slug='rpt_hr_attrition';     name='HR - Attrition & Tenure';     smId=$smHr.id     }
+    @{ slug='rpt_sales_overview';   name='Retail - Sales Overview';     smId=$smRetail.id; folderId=$goldFolders['Retail'] }
+    @{ slug='rpt_sales_operations'; name='Retail - Operations';         smId=$smRetail.id; folderId=$goldFolders['Retail'] }
+    @{ slug='rpt_hr_workforce';     name='HR - Workforce Overview';     smId=$smHr.id;     folderId=$goldFolders['HR']     }
+    @{ slug='rpt_hr_attrition';     name='HR - Attrition & Tenure';     smId=$smHr.id;     folderId=$goldFolders['HR']     }
 )
 foreach ($rpt in $reports) {
     Write-Step "Creating report '$($rpt.name)' in gold workspace"
@@ -1738,9 +1752,22 @@ foreach ($rpt in $reports) {
         -WorkspaceId $workspaces['3-gold'].id `
         -Name $rpt.name `
         -DefinitionRoot (Join-Path $reportsRoot $rpt.slug) `
-        -Replacements @{ '__SEMANTIC_MODEL_ID__' = $rpt.smId }
+        -Replacements @{ '__SEMANTIC_MODEL_ID__' = $rpt.smId } `
+        -FolderId $rpt.folderId
     Write-Ok "  id=$($r.id)"
 }
+
+# -----------------------------------------------------------------------------
+# Data Agents -- one per semantic model. Built from the model's TMSL
+# (lineageTags -> element ids), placed in the matching folder.
+# -----------------------------------------------------------------------------
+Write-Step "Creating Fabric Data Agents (Retail Sales / HR & Workforce)"
+& (Join-Path $PSScriptRoot 'tools' 'deploy-data-agents.ps1') `
+    -DeploymentRoot $PSScriptRoot `
+    -WorkspaceId   $workspaces['3-gold'].id `
+    -RetailFolderId $goldFolders['Retail'] `
+    -HrFolderId     $goldFolders['HR']
+Write-Ok "  data agents deployed"
 
 # -----------------------------------------------------------------------------
 # Done (checkpoint 1: bronze-only, ready for manual silver/gold build-out)

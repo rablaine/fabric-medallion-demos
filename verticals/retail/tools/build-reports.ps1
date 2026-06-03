@@ -425,7 +425,7 @@ $kpis_sales = @(
     @{title='Customers';     m=@{entity='dim_customer';  prop='Customer Count'}}
 )
 $sov_visuals = @()
-$sov_visuals += New-TextBoxVisual -Pos @{x=20;y=12;w=1240;h=60} -Text 'Sales Overview' -FontSize 22
+$sov_visuals += New-TextBoxVisual -Pos @{x=20;y=12;w=1240;h=80} -Text 'Sales Overview' -FontSize 22
 
 # 6 KPI cards, 200x120 each, row at y=72
 $x = 20
@@ -456,7 +456,7 @@ $kpis_ops = @(
     @{title='5-Star %';          m=@{entity='fact_reviews';   prop='5-Star %'}}
 )
 $ops_visuals = @()
-$ops_visuals += New-TextBoxVisual -Pos @{x=20;y=12;w=1240;h=60} -Text 'Operations Pulse' -FontSize 22
+$ops_visuals += New-TextBoxVisual -Pos @{x=20;y=12;w=1240;h=80} -Text 'Operations Pulse' -FontSize 22
 $x = 20
 foreach ($k in $kpis_ops) {
     $ops_visuals += New-CardVisual -Pos @{x=$x;y=72;w=200;h=120} -Title $k.title -Measure $k.m
@@ -487,7 +487,7 @@ $kpis_hr = @(
     @{title='Avg Span';         m=@{entity='dim_employee'; prop='Avg Span of Control'}}
 )
 $hr_visuals = @()
-$hr_visuals += New-TextBoxVisual -Pos @{x=20;y=12;w=1240;h=60} -Text 'Workforce Overview' -FontSize 22
+$hr_visuals += New-TextBoxVisual -Pos @{x=20;y=12;w=1240;h=80} -Text 'Workforce Overview' -FontSize 22
 $x = 20
 foreach ($k in $kpis_hr) {
     $hr_visuals += New-CardVisual -Pos @{x=$x;y=72;w=200;h=120} -Title $k.title -Measure $k.m
@@ -518,7 +518,7 @@ $kpis_attr = @(
     @{title='Net Change';       m=@{entity='dim_employee'; prop='Net Change'}}
 )
 $attr_visuals = @()
-$attr_visuals += New-TextBoxVisual -Pos @{x=20;y=12;w=1240;h=60} -Text 'Attrition & Tenure' -FontSize 22
+$attr_visuals += New-TextBoxVisual -Pos @{x=20;y=12;w=1240;h=80} -Text 'Attrition & Tenure' -FontSize 22
 $x = 20
 foreach ($k in $kpis_attr) {
     $attr_visuals += New-CardVisual -Pos @{x=$x;y=72;w=200;h=120} -Title $k.title -Measure $k.m

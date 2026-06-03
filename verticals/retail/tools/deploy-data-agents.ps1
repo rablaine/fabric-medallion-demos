@@ -8,7 +8,10 @@
 
 [CmdletBinding()]
 param(
-    [string]$DeploymentRoot = $PSScriptRoot
+    [string]$DeploymentRoot = $PSScriptRoot,
+    [string]$WorkspaceId,
+    [string]$RetailFolderId,
+    [string]$HrFolderId
 )
 
 $ErrorActionPreference = 'Stop'
@@ -170,7 +173,11 @@ function Build-AgentDefinitionParts {
 # Main
 # -----------------------------------------------------------------------------
 $tok = Get-FabricToken
-$ws = (Invoke-FabricRest -Token $tok -Method GET -Path '/workspaces').Body.value | Where-Object { $_.displayName -like 'cts-rtl-3-gold-*' } | Select-Object -First 1
+if ($WorkspaceId) {
+    $ws = (Invoke-FabricRest -Token $tok -Method GET -Path "/workspaces/$WorkspaceId").Body
+} else {
+    $ws = (Invoke-FabricRest -Token $tok -Method GET -Path '/workspaces').Body.value | Where-Object { $_.displayName -like 'cts-rtl-3-gold-*' } | Select-Object -First 1
+}
 if (-not $ws) { throw "gold workspace not found" }
 $wsId = $ws.id
 Write-Host "Gold ws: $($ws.displayName) ($wsId)" -ForegroundColor Cyan
@@ -187,8 +194,8 @@ foreach ($a in $existingAgents) {
 }
 
 $targets = @(
-    @{ agent='Retail Sales agent'; model=$smRetail }
-    @{ agent='HR & Workforce agent'; model=$smHr     }
+    @{ agent='Retail Sales agent';   model=$smRetail; folderId=$RetailFolderId }
+    @{ agent='HR & Workforce agent'; model=$smHr;     folderId=$HrFolderId     }
 )
 
 foreach ($t in $targets) {
@@ -206,6 +213,7 @@ foreach ($t in $targets) {
         type        = 'DataAgent'
         definition  = @{ parts = $parts }
     }
+    if ($t.folderId) { $body.folderId = $t.folderId }
     $r = Invoke-FabricRest -Token $tok -Method POST -Path "/workspaces/$wsId/items" -Body $body
     if ($r.OperationLocation) {
         $op = Wait-FabricOperation -Token $tok -OperationLocation $r.OperationLocation -Label "create $($t.agent)"
