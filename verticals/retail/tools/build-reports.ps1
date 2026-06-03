@@ -232,7 +232,9 @@ function New-TableVisual {
         [hashtable]$Pos,
         [string]$Title,
         # @( @{entity;prop;type='col'|'meas'} )
-        [hashtable[]]$Fields
+        [hashtable[]]$Fields,
+        # Optional default sort: @{entity;prop;type='col'|'meas';dir='asc'|'desc'}
+        [hashtable]$OrderBy
     )
     # Stable per-entity aliases so multi-table joins resolve.
     $aliasMap = @{}
@@ -262,6 +264,19 @@ function New-TableVisual {
         Version = 2
         From    = (_From $from)
         Select  = $sel
+    }
+    if ($OrderBy) {
+        if (-not $aliasMap.ContainsKey($OrderBy.entity)) {
+            throw "New-TableVisual: OrderBy entity '$($OrderBy.entity)' not in Fields"
+        }
+        $obAlias = $aliasMap[$OrderBy.entity]
+        $obExpr = if ($OrderBy.type -eq 'meas') {
+            @{ Measure = @{ Expression = @{ SourceRef = @{ Source = $obAlias } }; Property = $OrderBy.prop } }
+        } else {
+            @{ Column  = @{ Expression = @{ SourceRef = @{ Source = $obAlias } }; Property = $OrderBy.prop } }
+        }
+        $dir = if ($OrderBy.dir -eq 'asc') { 1 } else { 2 }
+        $proto.OrderBy = @(@{ Direction = $dir; Expression = $obExpr })
     }
     $single = @{
         visualType = 'tableEx'
@@ -471,7 +486,7 @@ $ops_visuals += New-TableVisual    -Pos @{x=20;y=450;w=680;h=235} -Title 'Stores
     @{entity='fact_orders';   prop='Net Sales';        type='meas'}
     @{entity='fact_shipments';prop='On-Time Ship %';   type='meas'}
     @{entity='fact_returns';  prop='Return Rate';      type='meas'}
-)
+) -OrderBy @{entity='fact_orders';prop='Net Sales';type='meas';dir='desc'}
 $ops_visuals += New-LineChartVisual -Pos @{x=710;y=450;w=550;h=235} -Title 'On-Time Ship % over time' -Axis @{entity='dim_date';prop='Date'} -Measure @{entity='fact_shipments';prop='On-Time Ship %'}
 
 # =============================================================================

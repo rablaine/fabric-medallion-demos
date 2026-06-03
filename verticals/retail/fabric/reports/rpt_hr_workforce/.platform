@@ -1,11 +1,11 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
   "metadata": {
-    "displayName": "HR - Workforce Overview",
-    "type": "Report"
+    "type": "Report",
+    "displayName": "HR - Workforce Overview"
   },
   "config": {
     "version": "2.0",
-    "logicalId": "b273d3dd-2416-4602-b634-62f665a1d6e3"
+    "logicalId": "67ec2cab-9d19-4c44-8247-39fad3f19694"
   }
 }

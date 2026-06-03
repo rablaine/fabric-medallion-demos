@@ -1,11 +1,11 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
   "metadata": {
-    "displayName": "HR - Attrition & Tenure",
-    "type": "Report"
+    "type": "Report",
+    "displayName": "HR - Attrition & Tenure"
   },
   "config": {
     "version": "2.0",
-    "logicalId": "4b32286a-64c0-47af-a164-b75214e1d5a2"
+    "logicalId": "c9e2eb65-aef8-4157-bb5a-3cc7f34c5cfe"
   }
 }
