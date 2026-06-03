@@ -495,7 +495,11 @@ def generate() -> str:
         pm       = random.choices(payment_methods, weights=payment_weights)[0]
         cb       = random.choice(card_brands) if "card" in pm else None
         cl4      = fake.numerify("####") if cb else None
-        pay_status = "captured" if status != "cancelled" else "voided"
+        if status == "cancelled":
+            pay_status = "voided"
+        else:
+            r = random.random()
+            pay_status = "failed" if r < 0.03 else ("declined" if r < 0.04 else "captured")
         txn_ref  = uuid.uuid4().hex.upper()[:20]
         payment_rows.append(
             f"{order_id}, {sq(pm)}, {sq(cb)}, {sq(cl4)}, {total}, "

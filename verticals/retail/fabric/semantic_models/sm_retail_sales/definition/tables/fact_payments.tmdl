@@ -85,7 +85,7 @@ table fact_payments
 
 	measure 'Payment Failure %' = ```
 			DIVIDE(
-				CALCULATE([Payment Count], 'fact_payments'[Status] IN { "failed", "declined" }),
+				CALCULATE([Payment Count], 'fact_payments'[Status] IN { "failed", "declined", "voided" }),
 				[Payment Count]
 			)
 			```
