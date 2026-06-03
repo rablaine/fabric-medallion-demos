@@ -66,6 +66,7 @@ class PackageBuilder:
             f"RESOURCE_GROUP={config['resource_group']}",
             f"LOCATION={config['location']}",
             f"RESOURCE_PREFIX={config['resource_prefix']}",
+            f"AUTO_RUN_INITIAL_LOAD={'true' if config.get('auto_run_initial_load') else 'false'}",
         ]
         (staging / "deployment.config").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

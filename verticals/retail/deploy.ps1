@@ -1299,6 +1299,20 @@ while ($true) {
         }
     } catch {
         if ($_.Exception.Message -match 'SQL mirror reported failures') { throw }
+        # Fabric service-side transient (e.g. error 9001 "service has encountered
+        # an error") on getTablesMirroringStatus. Treated like per-table Failed:
+        # one stop+start restart usually clears it.
+        if ($_.Exception.Message -match '9001|service has encountered an error' -and $mirrorRestartsRemaining -gt 0) {
+            Write-Info "  mirror status API returned service error; restarting once"
+            Write-Info "  detail: $($_.Exception.Message)"
+            $mirrorRestartsRemaining--
+            try { Invoke-FabricRest -Token $fabricToken -Method POST -Path $mirrorStopPath | Out-Null } catch { Write-Info "  (stopMirroring threw: $_)" }
+            Start-Sleep -Seconds 20
+            Invoke-FabricRest -Token $fabricToken -Method POST -Path $mirrorStartPath | Out-Null
+            Write-Info "  restart submitted; resuming poll"
+            Start-Sleep -Seconds 30
+            continue
+        }
         # otherwise keep polling DFS
     }
 
@@ -1856,26 +1870,33 @@ Write-Host ""
 Write-Host "teardown.ps1 + teardown.cmd are next to deploy.ps1 -- double-click teardown.cmd when ready to clean up." -ForegroundColor Cyan
 Write-Host ""
 
-# Offer to run pl_initial_load now. Default = Yes so just hitting Enter does it.
-$kickAns = Read-Host "Kick off pl_initial_load now? [Y/n]"
-if ([string]::IsNullOrWhiteSpace($kickAns) -or $kickAns -match '^[Yy]') {
-    Write-Step "Triggering pl_initial_load (id=$($fullPl.id))"
+# Auto-run the initial medallion load based on the checkbox the user ticked
+# on the configure page (defaults to true). When false, skip and print the
+# manual instructions instead.
+$autoRun = ($config['AUTO_RUN_INITIAL_LOAD'] -eq 'true')
+if ($autoRun) {
+    Write-Step "Triggering pl_initial_load (id=$($fullPl.id)) -- AUTO_RUN_INITIAL_LOAD=true"
     $pipelineUrl = "https://app.fabric.microsoft.com/groups/$($workspaces['1-bronze'].id)/pipelines/$($fullPl.id)"
     $monitorUrl  = "https://app.fabric.microsoft.com/groups/$($workspaces['1-bronze'].id)/monitoringhub"
-    Write-Host "  Monitor the run live:" -ForegroundColor Gray
-    Write-Host "    Pipeline runs: $pipelineUrl" -ForegroundColor Blue
-    Write-Host "    Monitor hub:   $monitorUrl"  -ForegroundColor Blue
     try {
         $kickToken = Get-FabricToken
-        Invoke-FabricDataPipeline -Token $kickToken -WorkspaceId $workspaces['1-bronze'].id -PipelineId $fullPl.id -TimeoutSeconds 5400 | Out-Null
-        Write-Ok "pl_initial_load completed"
+        # Fire-and-forget: start the run, don't block the deploy script on
+        # completion (pl_initial_load takes 30-60 min and there's no reason
+        # to hold the terminal open for it).
+        Invoke-FabricRest -Token $kickToken -Method POST `
+            -Path "/workspaces/$($workspaces['1-bronze'].id)/items/$($fullPl.id)/jobs/instances?jobType=Pipeline" | Out-Null
+        Write-Ok "pl_initial_load run submitted (runs ~30-60 min in the background)"
+        Write-Host "  Monitor progress in Fabric:" -ForegroundColor Gray
+        Write-Host "    Monitor hub (recommended): $monitorUrl"  -ForegroundColor Blue
+        Write-Host "    Pipeline definition:       $pipelineUrl" -ForegroundColor Blue
+        Write-Host "      (click Run > View run history to see this run)" -ForegroundColor DarkGray
     } catch {
-        Write-Host "pl_initial_load failed: $_" -ForegroundColor Red
-        Write-Host "Check the run detail in the Fabric portal:" -ForegroundColor Yellow
+        Write-Host "Failed to submit pl_initial_load: $_" -ForegroundColor Red
+        Write-Host "Trigger it manually from the Fabric portal:" -ForegroundColor Yellow
         Write-Host "  $pipelineUrl" -ForegroundColor Blue
     }
 } else {
-    Write-Info "Skipped. Run pl_initial_load yourself from the Fabric portal when ready."
+    Write-Info "AUTO_RUN_INITIAL_LOAD=false -- skipping initial load. Run pl_initial_load yourself from the Fabric portal when ready."
 }
 Write-Host ""
 

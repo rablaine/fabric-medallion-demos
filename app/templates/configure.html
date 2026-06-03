@@ -37,6 +37,12 @@
             <small>Lowercase letters and numbers only. Max 12 chars.</small>
         </label>
 
+        <label class="checkbox-label">
+            <input type="checkbox" name="auto_run_initial_load" value="true" checked>
+            <span>Automatically run the initial medallion load after deploy finishes</span>
+            <small>Triggers <code>pl_initial_load</code> (which chains bronze + silver + gold) so the warehouse is populated end-to-end before the script exits. Uncheck to stop after infrastructure deploy and trigger it manually from Fabric later.</small>
+        </label>
+
         <div class="form-actions">
             <button type="submit" class="cta-button">Download Deployment Package</button>
             <button type="button" class="help-button" aria-label="What you'll get"
@@ -51,32 +57,56 @@
             You fill in the form, click <em>Download Deployment Package</em>, and
             get a zip with your settings baked in. Inside the zip is <code>deploy.cmd</code>.
             Running it prompts for your Azure account + subscription, then deploys
-            everything in order:
+            an end-to-end retail data estate in one shot (typically 25-40 minutes).
         </p>
+
+        <h3>Azure infrastructure (Bicep)</h3>
         <ol class="deploy-steps">
             <li><strong>Resource group</strong> in your chosen region</li>
-            <li><strong>Azure SQL</strong> (serverless) + the retail schema</li>
-            <li><strong>ADLS Gen2</strong> with <code>raw</code> + <code>curated</code> containers</li>
-            <li><strong>Fabric F2 capacity</strong> (you as admin)</li>
-            <li><strong>Bronze workspace</strong> + lakehouse in Fabric</li>
-            <li><strong>Seed notebook</strong> uploaded and executed &mdash; populates SQL with a fiscal quarter of data (5k customers, 1.5k products, 50k orders) and drops 90 days of supplier Parquet + marketing CSV files into ADLS <code>raw/</code></li>
-            <li><strong>SQL Mirror</strong> of every retail table into the bronze lakehouse as Delta &mdash; real-time, no pipeline needed</li>
-            <li><strong>OneLake shortcut</strong> from <code>Files/raw</code> &rarr; your ADLS <code>raw/</code> container</li>
+            <li><strong>Azure SQL</strong> serverless Gen5 with the retail OLTP schema + change tracking</li>
+            <li><strong>ADLS Gen2</strong> with <code>raw</code> + <code>curated</code> containers (supplier Parquet, marketing CSV land here)</li>
+            <li><strong>Event Hubs Standard</strong> for live clickstream</li>
+            <li><strong>Azure Functions (Flex Consumption)</strong> emitting synthetic clickstream into Event Hubs</li>
+            <li><strong>Fabric F8 capacity</strong> with you as admin</li>
         </ol>
+
+        <h3>Fabric: bronze workspace</h3>
+        <ol class="deploy-steps">
+            <li><strong>Bronze workspace</strong> + lakehouse + workspace identity</li>
+            <li><strong>Seed notebook</strong> populates SQL with a fiscal quarter of data (customers, products, orders, payments, shipments, returns, reviews) and drops 90 days of supplier Parquet + marketing CSV into ADLS <code>raw/</code></li>
+            <li><strong>SQL Mirror</strong> of every retail table into the bronze lakehouse as Delta &mdash; real-time, no pipeline</li>
+            <li><strong>OneLake shortcut</strong> <code>Files/raw</code> &rarr; ADLS <code>raw/</code></li>
+            <li><strong>Eventhouse + KQL DB</strong> with a Clickstream table; <strong>Eventstream</strong> wires Event Hubs &rarr; KQL DirectIngestion</li>
+            <li><strong>Clickstream backfill notebook</strong> seeds ~2M historical events into KQL</li>
+            <li><strong>All pipelines live here</strong> (orchestration hub): weather ingest, bronze initial / incremental load, silver initial / incremental load, gold initial / incremental load</li>
+        </ol>
+
+        <h3>Fabric: silver workspace</h3>
+        <ol class="deploy-steps">
+            <li><strong>silver_raw</strong> lakehouse with shortcuts to the bronze mirror tables</li>
+            <li><strong>silver_curated</strong> lakehouse with full-load notebooks (retail, weather, clickstream, HR, ops) that build conformed dimensions and curated facts</li>
+            <li>Notebooks only &mdash; the silver pipelines that run them live in the bronze workspace</li>
+        </ol>
+
+        <h3>Fabric: gold workspace</h3>
+        <ol class="deploy-steps">
+            <li><strong>Gold warehouse</strong> with DDL + stored procedures that rebuild gold star schema (fact_orders, fact_payments, fact_shipments, fact_returns, fact_reviews, dim_store, dim_product, dim_customer, dim_employee, &hellip;)</li>
+            <li><strong>Shortcut lakehouse</strong> back to silver_curated so the gold sprocs can CTAS from curated data</li>
+            <li><strong>Semantic models</strong> (Direct Lake): Retail Sales, HR &amp; Workforce</li>
+            <li><strong>Power BI reports:</strong> Retail &mdash; Sales Overview, Retail &mdash; Operations Pulse, HR &mdash; Workforce Overview, HR &mdash; Attrition &amp; Tenure (organized into Retail / HR folders)</li>
+            <li><strong>Data agents</strong> for natural-language Q&amp;A over the gold semantic models</li>
+        </ol>
+
         <p>
-            <strong>Checkpoint:</strong> at this point you have a fully populated bronze
-            layer. Open <a href="https://app.fabric.microsoft.com" target="_blank" rel="noopener">Fabric</a>,
-            find your bronze workspace, and browse the mirrored tables + raw files.
+            <strong>What you can do when it's done:</strong> open
+            <a href="https://app.fabric.microsoft.com" target="_blank" rel="noopener">Fabric</a>,
+            browse the three workspaces, run the reports, chat with the data agents,
+            and trigger the incremental pipelines (or the <em>simulate-incremental</em>
+            notebook) to fabricate a new day of activity and watch it propagate
+            bronze &rarr; silver &rarr; gold &rarr; reports.
         </p>
         <p>
-            <strong>Next phase (run when ready):</strong> medallion build-out &mdash;
-            silver + gold workspaces, bronze&rarr;silver and silver&rarr;gold
-            notebooks, an initial-load pipeline, an incremental-load pipeline, and a
-            "simulate-incremental" notebook that fabricates new daily activity. You run the initial
-            load once, then trigger incremental loads on demand.
-        </p>
-        <p>
-            <em>When you're done, pause the Fabric capacity (or delete the RG) to stop the bill.</em>
+            <em>When you're done, run <code>teardown.cmd</code> from the same package and it'll tear down everything that was built.</em>
         </p>
     </dialog>
 

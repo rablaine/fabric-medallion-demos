@@ -14,6 +14,7 @@ async def generate_package(
     resource_group: str = Form(...),
     location: str = Form("centralus"),
     resource_prefix: str = Form("contoso"),
+    auto_run_initial_load: str = Form(None),
 ):
     """Generate a downloadable deployment package for the selected vertical."""
     registry = request.app.state.registry
@@ -27,6 +28,7 @@ async def generate_package(
             "resource_group": resource_group,
             "location": location,
             "resource_prefix": resource_prefix,
+            "auto_run_initial_load": auto_run_initial_load is not None,
         }
     )
     return FileResponse(
