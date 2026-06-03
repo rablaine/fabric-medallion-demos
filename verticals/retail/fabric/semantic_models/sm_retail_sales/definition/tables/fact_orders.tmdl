@@ -1,0 +1,281 @@
+/// Order header. One row per order. Joins to dim_customer, dim_store, dim_promotion, dim_date (order_date).
+table fact_orders
+	lineageTag: aa000030-0000-0000-0000-000000000001
+
+	column order_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: order_id
+		lineageTag: aa000030-0000-0000-0000-000000000002
+
+	column 'Order Number'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: order_number
+		lineageTag: aa000030-0000-0000-0000-000000000003
+
+	column customer_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: customer_id
+		lineageTag: aa000030-0000-0000-0000-000000000004
+
+	column 'Order Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: order_date
+		lineageTag: aa000030-0000-0000-0000-000000000005
+
+	column 'Order Status'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: order_status
+		lineageTag: aa000030-0000-0000-0000-000000000006
+
+	column Channel
+		dataType: string
+		summarizeBy: none
+		sourceColumn: channel
+		lineageTag: aa000030-0000-0000-0000-000000000007
+
+	column store_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: store_id
+		lineageTag: aa000030-0000-0000-0000-000000000008
+
+	column promotion_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: promotion_id
+		lineageTag: aa000030-0000-0000-0000-000000000009
+
+	column 'Has Promotion'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: has_promotion
+		lineageTag: aa000030-0000-0000-0000-00000000000a
+
+	column Subtotal
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: subtotal
+		lineageTag: aa000030-0000-0000-0000-00000000000b
+		displayFolder: Amounts
+
+	column 'Tax Amount'
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: tax_amount
+		lineageTag: aa000030-0000-0000-0000-00000000000c
+		displayFolder: Amounts
+
+	column 'Shipping Amount'
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: shipping_amount
+		lineageTag: aa000030-0000-0000-0000-00000000000d
+		displayFolder: Amounts
+
+	column 'Discount Amount'
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: discount_amount
+		lineageTag: aa000030-0000-0000-0000-00000000000e
+		displayFolder: Amounts
+
+	column 'Total Amount'
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: total_amount
+		lineageTag: aa000030-0000-0000-0000-00000000000f
+		displayFolder: Amounts
+
+	column 'Net Amount'
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: net_amount
+		lineageTag: aa000030-0000-0000-0000-000000000010
+		displayFolder: Amounts
+
+	column 'Basket Size'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: none
+		sourceColumn: basket_size
+		lineageTag: aa000030-0000-0000-0000-000000000011
+
+	column 'Total Units'
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: none
+		sourceColumn: total_units
+		lineageTag: aa000030-0000-0000-0000-000000000012
+
+
+
+
+
+	/// Distinct orders.
+	measure 'Order Count' = DISTINCTCOUNT('fact_orders'[order_id])
+		formatString: '#,0'
+		lineageTag: aa000030-0000-0000-0000-000000000100
+		displayFolder: '01 Orders'
+
+	/// Sum of order subtotals (before discount, tax, shipping).
+	measure 'Gross Sales' = SUM('fact_orders'[Subtotal])
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000030-0000-0000-0000-000000000101
+		displayFolder: '02 Revenue'
+
+	/// Total discount applied.
+	measure 'Discount $' = SUM('fact_orders'[Discount Amount])
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000030-0000-0000-0000-000000000102
+		displayFolder: '02 Revenue'
+
+	measure 'Discount %' = DIVIDE([Discount $], [Gross Sales])
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: aa000030-0000-0000-0000-000000000103
+		displayFolder: '02 Revenue'
+
+	/// Subtotal minus discount.
+	measure 'Net Sales' = SUM('fact_orders'[Net Amount])
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000030-0000-0000-0000-000000000104
+		displayFolder: '02 Revenue'
+
+	/// Gross order total including tax and shipping.
+	measure 'Total Revenue' = SUM('fact_orders'[Total Amount])
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000030-0000-0000-0000-000000000105
+		displayFolder: '02 Revenue'
+
+	/// Average Order Value = Net Sales / Order Count.
+	measure AOV = DIVIDE([Net Sales], [Order Count])
+		formatString: '\$#,0.00;(\$#,0.00);\$#,0.00'
+		lineageTag: aa000030-0000-0000-0000-000000000106
+		displayFolder: '02 Revenue'
+
+	measure 'Units Sold' = SUM('fact_orders'[Total Units])
+		formatString: '#,0'
+		lineageTag: aa000030-0000-0000-0000-000000000107
+		displayFolder: '02 Revenue'
+
+	/// Average distinct items per order.
+	measure 'Avg Basket Size' = AVERAGE('fact_orders'[Basket Size])
+		formatString: '0.0'
+		lineageTag: aa000030-0000-0000-0000-000000000108
+		displayFolder: '02 Revenue'
+
+	measure 'Cancel Rate' = ```
+			DIVIDE(
+				CALCULATE([Order Count], 'fact_orders'[Order Status] = "cancelled"),
+				[Order Count]
+			)
+			```
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: aa000030-0000-0000-0000-000000000109
+		displayFolder: '01 Orders'
+
+	measure 'Promoted Order %' = ```
+			DIVIDE(
+				CALCULATE([Order Count], 'fact_orders'[Has Promotion] = TRUE),
+				[Order Count]
+			)
+			```
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: aa000030-0000-0000-0000-00000000010a
+		displayFolder: '01 Orders'
+
+	/// Customers whose first-ever order falls inside the selected date range.
+	measure 'New Customers' = ```
+			VAR _firstOrder =
+				CALCULATETABLE(
+					ADDCOLUMNS(
+						VALUES('fact_orders'[customer_id]),
+						"FirstDate", CALCULATE(MIN('fact_orders'[Order Date]), ALL('dim_date'))
+					),
+					ALLSELECTED('dim_date')
+				)
+			VAR _start = MIN('dim_date'[Date])
+			VAR _end   = MAX('dim_date'[Date])
+			RETURN
+			COUNTROWS(FILTER(_firstOrder, [FirstDate] >= _start && [FirstDate] <= _end))
+			```
+		formatString: '#,0'
+		lineageTag: aa000030-0000-0000-0000-00000000010b
+		displayFolder: '03 Customer'
+
+
+
+	measure 'Net Sales MTD' = TOTALMTD([Net Sales], 'dim_date'[Date])
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000030-0000-0000-0000-00000000010c
+		displayFolder: '04 Time Intelligence'
+
+	measure 'Net Sales QTD' = TOTALQTD([Net Sales], 'dim_date'[Date])
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000030-0000-0000-0000-00000000010d
+		displayFolder: '04 Time Intelligence'
+
+	measure 'Net Sales YTD' = TOTALYTD([Net Sales], 'dim_date'[Date])
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000030-0000-0000-0000-00000000010e
+		displayFolder: '04 Time Intelligence'
+
+	measure 'Net Sales PY' = CALCULATE([Net Sales], SAMEPERIODLASTYEAR('dim_date'[Date]))
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000030-0000-0000-0000-00000000010f
+		displayFolder: '04 Time Intelligence'
+
+	measure 'Net Sales YoY %' = DIVIDE([Net Sales] - [Net Sales PY], [Net Sales PY])
+		formatString: '+0.0%;-0.0%;0.0%'
+		lineageTag: aa000030-0000-0000-0000-000000000110
+		displayFolder: '04 Time Intelligence'
+
+	measure 'Net Sales 28d Rolling' = ```
+			CALCULATE(
+				[Net Sales],
+				DATESINPERIOD('dim_date'[Date], MAX('dim_date'[Date]), -28, DAY)
+			)
+			```
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000030-0000-0000-0000-000000000111
+		displayFolder: '04 Time Intelligence'
+
+	measure 'Orders 28d Rolling' = ```
+			CALCULATE(
+				[Order Count],
+				DATESINPERIOD('dim_date'[Date], MAX('dim_date'[Date]), -28, DAY)
+			)
+			```
+		formatString: '#,0'
+		lineageTag: aa000030-0000-0000-0000-000000000112
+		displayFolder: '04 Time Intelligence'
+
+	partition fact_orders = entity
+		mode: directLake
+		source
+			entityName: fact_orders
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+

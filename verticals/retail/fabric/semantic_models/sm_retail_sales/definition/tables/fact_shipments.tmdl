@@ -1,0 +1,101 @@
+/// Outbound shipments. One row per shipment per order.
+table fact_shipments
+	lineageTag: aa000033-0000-0000-0000-000000000001
+
+	column shipment_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: shipment_id
+		lineageTag: aa000033-0000-0000-0000-000000000002
+
+	column order_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: order_id
+		lineageTag: aa000033-0000-0000-0000-000000000003
+
+	column Carrier
+		dataType: string
+		summarizeBy: none
+		sourceColumn: carrier
+		lineageTag: aa000033-0000-0000-0000-000000000004
+
+	column Status
+		dataType: string
+		summarizeBy: none
+		sourceColumn: status
+		lineageTag: aa000033-0000-0000-0000-000000000005
+
+	column 'Shipped Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: shipped_date
+		lineageTag: aa000033-0000-0000-0000-000000000006
+
+	column 'Delivered Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: delivered_date
+		lineageTag: aa000033-0000-0000-0000-000000000007
+
+	column 'Transit Days'
+		dataType: int64
+		formatString: '0'
+		summarizeBy: average
+		sourceColumn: transit_days
+		lineageTag: aa000033-0000-0000-0000-000000000008
+
+	column 'Is Delivered'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_delivered
+		lineageTag: aa000033-0000-0000-0000-000000000009
+
+	column 'Is On Time'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_on_time
+		lineageTag: aa000033-0000-0000-0000-00000000000a
+
+	measure 'Shipment Count' = COUNTROWS('fact_shipments')
+		formatString: '#,0'
+		lineageTag: aa000033-0000-0000-0000-000000000100
+		displayFolder: 'Fulfillment'
+
+	measure 'Shipped Orders' = DISTINCTCOUNT('fact_shipments'[order_id])
+		formatString: '#,0'
+		lineageTag: aa000033-0000-0000-0000-000000000101
+		displayFolder: 'Fulfillment'
+
+	measure 'On-Time Ship %' = ```
+			DIVIDE(
+				CALCULATE([Shipment Count], 'fact_shipments'[Is On Time] = TRUE),
+				CALCULATE([Shipment Count], 'fact_shipments'[Is Delivered] = TRUE)
+			)
+			```
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: aa000033-0000-0000-0000-000000000102
+		displayFolder: 'Fulfillment'
+
+	measure 'Avg Days to Ship' = AVERAGE('fact_shipments'[Transit Days])
+		formatString: '0.0'
+		lineageTag: aa000033-0000-0000-0000-000000000103
+		displayFolder: 'Fulfillment'
+
+	partition fact_shipments = entity
+		mode: directLake
+		source
+			entityName: fact_shipments
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+

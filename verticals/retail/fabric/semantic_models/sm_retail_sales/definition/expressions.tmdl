@@ -1,0 +1,10 @@
+expression DatabaseQuery =
+		let
+			database = Sql.Database("__WAREHOUSE_SQL_ENDPOINT__", "__WAREHOUSE_NAME__")
+		in
+			database
+	lineageTag: aa000010-0000-0000-0000-000000000001
+
+	annotation PBI_NavigationStepName = Navigation
+	annotation PBI_ResultType = Table
+

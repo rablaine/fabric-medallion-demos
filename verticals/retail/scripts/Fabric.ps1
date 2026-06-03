@@ -1350,3 +1350,96 @@ function Get-FabricEventstreamSourceConnectionString {
     }
     return $r.accessKeys.primaryConnectionString
 }
+
+# -----------------------------------------------------------------------------
+# Semantic Models (TMDL)
+# -----------------------------------------------------------------------------
+
+function New-FabricSemanticModel {
+    <#
+    .SYNOPSIS
+        Creates (or updates) a Fabric Semantic Model from a local TMDL
+        definition folder (.platform + definition.pbism + definition/*.tmdl).
+    .DESCRIPTION
+        Walks $DefinitionRoot, base64-encodes every file (except .platform,
+        which is git-integration metadata only), applies optional text
+        $Replacements to .tmdl / .pbism payloads, and POSTs as a Fabric
+        Semantic Model item. Idempotent: if a model with the same name
+        already exists in the workspace, its definition is updated in place.
+    .PARAMETER DefinitionRoot
+        Local folder containing the model project (e.g. sm_retail_sales/).
+        Must contain definition/ subfolder with database.tmdl + model.tmdl.
+    .PARAMETER Replacements
+        Hashtable of literal token -> value pairs applied to each text part
+        before upload. Used to inject the warehouse SQL endpoint + db name.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$DefinitionRoot,
+        [hashtable]$Replacements,
+        [string]$FolderId
+    )
+    if (-not (Test-Path $DefinitionRoot)) {
+        throw "Semantic model definition root not found: $DefinitionRoot"
+    }
+
+    $rootFull = (Resolve-Path $DefinitionRoot).Path
+    $files = Get-ChildItem -Path $rootFull -Recurse -File |
+        Where-Object { $_.Name -ne '.platform' }
+
+    $parts = @()
+    foreach ($f in $files) {
+        $rel = $f.FullName.Substring($rootFull.Length).TrimStart('\','/').Replace('\','/')
+        $isText = $f.Extension -in @('.tmdl', '.pbism', '.json')
+        if ($isText) {
+            $text = Get-Content -Raw -Path $f.FullName
+            if ($Replacements) {
+                foreach ($k in $Replacements.Keys) {
+                    $text = $text.Replace($k, [string]$Replacements[$k])
+                }
+            }
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+        } else {
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+        }
+        $parts += @{
+            path        = $rel
+            payload     = [Convert]::ToBase64String($bytes)
+            payloadType = 'InlineBase64'
+        }
+    }
+
+    $definition = @{ parts = $parts }
+
+    $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/semanticModels"
+    $existing = $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+
+    if ($existing) {
+        Write-Verbose "Semantic model '$Name' exists (id=$($existing.id)); updating definition."
+        $body = @{ definition = $definition }
+        $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/semanticModels/$($existing.id)/updateDefinition" -Body $body
+        if ($r.Status -eq 202 -and $r.OperationLocation) {
+            Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "update semantic model $Name" | Out-Null
+        }
+        return $existing
+    }
+
+    $body = @{
+        displayName = $Name
+        definition  = $definition
+    }
+    if ($FolderId) { $body.folderId = $FolderId }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/semanticModels" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create semantic model $Name" | Out-Null
+        $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/semanticModels"
+        return $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    }
+    return $r.Body
+}
+
+
+

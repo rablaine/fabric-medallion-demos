@@ -1,0 +1,116 @@
+/// Order line items. One row per (order_id, product_id) line. Joins to fact_orders and dim_product.
+table fact_sales
+	lineageTag: aa000031-0000-0000-0000-000000000001
+
+	column order_item_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: order_item_id
+		lineageTag: aa000031-0000-0000-0000-000000000002
+
+	column order_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: order_id
+		lineageTag: aa000031-0000-0000-0000-000000000003
+
+	column product_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: product_id
+		lineageTag: aa000031-0000-0000-0000-000000000004
+
+	column Quantity
+		dataType: int64
+		formatString: '#,0'
+		summarizeBy: sum
+		sourceColumn: quantity
+		lineageTag: aa000031-0000-0000-0000-000000000005
+
+	column 'Unit Price'
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: none
+		sourceColumn: unit_price
+		lineageTag: aa000031-0000-0000-0000-000000000006
+
+	column 'Line Discount'
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: line_discount
+		lineageTag: aa000031-0000-0000-0000-000000000007
+
+	column 'Line Total'
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: line_total
+		lineageTag: aa000031-0000-0000-0000-000000000008
+
+	column 'Line Gross'
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: line_gross
+		lineageTag: aa000031-0000-0000-0000-000000000009
+
+	column 'Line Margin'
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: line_margin
+		lineageTag: aa000031-0000-0000-0000-00000000000a
+
+	column 'Line Margin %'
+		dataType: decimal
+		formatString: '0.0%;-0.0%;0.0%'
+		summarizeBy: none
+		sourceColumn: line_margin_pct
+		lineageTag: aa000031-0000-0000-0000-00000000000b
+
+	measure 'Line Count' = COUNTROWS('fact_sales')
+		formatString: '#,0'
+		lineageTag: aa000031-0000-0000-0000-000000000100
+		displayFolder: 'Lines'
+
+	measure 'Total Units Sold' = SUM('fact_sales'[Quantity])
+		formatString: '#,0'
+		lineageTag: aa000031-0000-0000-0000-000000000101
+		displayFolder: 'Lines'
+
+	measure 'Line Revenue' = SUM('fact_sales'[Line Total])
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000031-0000-0000-0000-000000000102
+		displayFolder: 'Lines'
+
+	measure 'Total Margin $' = SUM('fact_sales'[Line Margin])
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000031-0000-0000-0000-000000000103
+		displayFolder: 'Margin'
+
+	measure 'Margin %' = DIVIDE([Total Margin $], [Line Revenue])
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: aa000031-0000-0000-0000-000000000104
+		displayFolder: 'Margin'
+
+	measure 'Avg Selling Price' = DIVIDE([Line Revenue], [Total Units Sold])
+		formatString: '\$#,0.00;(\$#,0.00);\$#,0.00'
+		lineageTag: aa000031-0000-0000-0000-000000000105
+		displayFolder: 'Lines'
+
+	partition fact_sales = entity
+		mode: directLake
+		source
+			entityName: fact_sales
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+

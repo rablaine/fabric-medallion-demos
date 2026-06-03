@@ -1,0 +1,104 @@
+/// Payment captures, refunds, and failures. One row per attempt.
+table fact_payments
+	lineageTag: aa000032-0000-0000-0000-000000000001
+
+	column payment_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: payment_id
+		lineageTag: aa000032-0000-0000-0000-000000000002
+
+	column order_id
+		dataType: int64
+		isHidden
+		formatString: '0'
+		summarizeBy: none
+		sourceColumn: order_id
+		lineageTag: aa000032-0000-0000-0000-000000000003
+
+	column 'Payment Method'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: payment_method
+		lineageTag: aa000032-0000-0000-0000-000000000004
+
+	column 'Card Brand'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: card_brand
+		lineageTag: aa000032-0000-0000-0000-000000000005
+
+	column Amount
+		dataType: decimal
+		formatString: '\$#,0.00'
+		summarizeBy: sum
+		sourceColumn: amount
+		lineageTag: aa000032-0000-0000-0000-000000000006
+
+	column Status
+		dataType: string
+		summarizeBy: none
+		sourceColumn: status
+		lineageTag: aa000032-0000-0000-0000-000000000007
+
+	column 'Is Settled'
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		summarizeBy: none
+		sourceColumn: is_settled
+		lineageTag: aa000032-0000-0000-0000-000000000008
+
+	column 'Processed Date'
+		dataType: dateTime
+		formatString: 'Short Date'
+		summarizeBy: none
+		sourceColumn: processed_date
+		lineageTag: aa000032-0000-0000-0000-000000000009
+
+	measure 'Payment Count' = COUNTROWS('fact_payments')
+		formatString: '#,0'
+		lineageTag: aa000032-0000-0000-0000-000000000100
+		displayFolder: 'Payments'
+
+	/// Sum of settled payments.
+	measure 'Captured $' = ```
+			CALCULATE(
+				SUM('fact_payments'[Amount]),
+				'fact_payments'[Is Settled] = TRUE
+			)
+			```
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000032-0000-0000-0000-000000000101
+		displayFolder: 'Payments'
+
+	measure 'Failed $' = ```
+			CALCULATE(
+				SUM('fact_payments'[Amount]),
+				'fact_payments'[Status] IN { "failed", "declined" }
+			)
+			```
+		formatString: '\$#,0;(\$#,0);\$#,0'
+		lineageTag: aa000032-0000-0000-0000-000000000102
+		displayFolder: 'Payments'
+
+	measure 'Payment Failure %' = ```
+			DIVIDE(
+				CALCULATE([Payment Count], 'fact_payments'[Status] IN { "failed", "declined" }),
+				[Payment Count]
+			)
+			```
+		formatString: '0.0%;-0.0%;0.0%'
+		lineageTag: aa000032-0000-0000-0000-000000000103
+		displayFolder: 'Payments'
+
+	partition fact_payments = entity
+		mode: directLake
+		source
+			entityName: fact_payments
+			schemaName: dbo
+			expressionSource: DatabaseQuery
+
+	annotation PBI_ResultType = Table
+

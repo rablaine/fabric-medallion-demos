@@ -1,0 +1,4 @@
+relationship bb000030-0000-0000-0000-000000000001
+	fromColumn: dim_employee.'Store ID'
+	toColumn: dim_store.'Store ID'
+

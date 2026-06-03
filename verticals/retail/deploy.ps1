@@ -1692,6 +1692,35 @@ $fullIncPl = New-FabricDataPipelineFromFile `
 Write-Ok "  pipeline id=$($fullIncPl.id)"
 
 # -----------------------------------------------------------------------------
+# Semantic models (TMDL, DirectLake on the gold warehouse)
+# Split intentionally: Retail Sales (orders/sales/payments/etc.) vs.
+# HR & Workforce (dim_employee). Separate audiences, separate RLS surfaces,
+# very different refresh / size profiles.
+# -----------------------------------------------------------------------------
+Write-Step "Creating semantic model 'Retail Sales' in gold workspace"
+$smSubs = @{
+    '__WAREHOUSE_SQL_ENDPOINT__' = $goldWhServer
+    '__WAREHOUSE_NAME__'         = 'contoso_retail_gold'
+}
+$smRoot = Join-Path $PSScriptRoot 'fabric' 'semantic_models'
+$smRetail = New-FabricSemanticModel `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['3-gold'].id `
+    -Name 'Retail Sales' `
+    -DefinitionRoot (Join-Path $smRoot 'sm_retail_sales') `
+    -Replacements $smSubs
+Write-Ok "  id=$($smRetail.id)"
+
+Write-Step "Creating semantic model 'HR & Workforce' in gold workspace"
+$smHr = New-FabricSemanticModel `
+    -Token $fabricToken `
+    -WorkspaceId $workspaces['3-gold'].id `
+    -Name 'HR & Workforce' `
+    -DefinitionRoot (Join-Path $smRoot 'sm_hr_workforce') `
+    -Replacements $smSubs
+Write-Ok "  id=$($smHr.id)"
+
+# -----------------------------------------------------------------------------
 # Done (checkpoint 1: bronze-only, ready for manual silver/gold build-out)
 # -----------------------------------------------------------------------------
 Write-Done
@@ -1750,6 +1779,8 @@ Write-Host "    Dimensions:     dim_date (fiscal year starts July 1), dim_custom
 Write-Host "    Facts:          fact_orders, fact_sales, fact_weather_daily, fact_sessions, fact_inventory, fact_payments, fact_returns, fact_reviews, fact_shipments"
 Write-Host "    Sprocs:         sp_RecreateDim* (x9), sp_RecreateFact* (x9) -- all DROP TABLE IF EXISTS + CTAS from silver_curated.dbo.*"
 Write-Host "    (Populated by pl_gold_initial_load -- or pl_initial_load. Empty placeholder rows until silver_curated runs at least once.)"
+Write-Host "  Semantic models:  Retail Sales (orders/sales/payments/shipments/returns/reviews/inventory; DirectLake)"
+Write-Host "                    HR & Workforce (dim_employee with headcount/attrition/tenure/payroll measures; DirectLake)"
 Write-Host ""
 Write-Host "Streaming source:" -ForegroundColor Yellow
 Write-Host "  Eventhouse:       contoso_retail_events_eh    (default KQL DB removed; events live in 'contoso_retail_events')"

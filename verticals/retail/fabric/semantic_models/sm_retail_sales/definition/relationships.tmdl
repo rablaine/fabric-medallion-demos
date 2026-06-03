@@ -1,0 +1,68 @@
+relationship aa000040-0000-0000-0000-000000000001
+	fromColumn: fact_orders.'Order Date'
+	toColumn: dim_date.Date
+
+relationship aa000040-0000-0000-0000-000000000002
+	fromColumn: fact_orders.customer_id
+	toColumn: dim_customer.'Customer ID'
+
+relationship aa000040-0000-0000-0000-000000000003
+	fromColumn: fact_orders.store_id
+	toColumn: dim_store.'Store ID'
+
+relationship aa000040-0000-0000-0000-000000000004
+	fromColumn: fact_orders.promotion_id
+	toColumn: dim_promotion.'Promotion ID'
+
+relationship aa000040-0000-0000-0000-000000000005
+	fromColumn: fact_sales.order_id
+	toColumn: fact_orders.order_id
+
+relationship aa000040-0000-0000-0000-000000000006
+	fromColumn: fact_sales.product_id
+	toColumn: dim_product.'Product ID'
+
+relationship aa000040-0000-0000-0000-000000000007
+	fromColumn: fact_payments.order_id
+	toColumn: fact_orders.order_id
+
+relationship aa000040-0000-0000-0000-000000000008
+	fromColumn: fact_payments.'Processed Date'
+	toColumn: dim_date.Date
+	isActive: false
+
+relationship aa000040-0000-0000-0000-000000000009
+	fromColumn: fact_shipments.order_id
+	toColumn: fact_orders.order_id
+
+relationship aa000040-0000-0000-0000-00000000000a
+	fromColumn: fact_shipments.'Shipped Date'
+	toColumn: dim_date.Date
+	isActive: false
+
+relationship aa000040-0000-0000-0000-00000000000b
+	fromColumn: fact_returns.order_id
+	toColumn: fact_orders.order_id
+
+relationship aa000040-0000-0000-0000-00000000000c
+	fromColumn: fact_returns.'Requested Date'
+	toColumn: dim_date.Date
+	isActive: false
+
+relationship aa000040-0000-0000-0000-00000000000d
+	fromColumn: fact_reviews.order_id
+	toColumn: fact_orders.order_id
+
+relationship aa000040-0000-0000-0000-00000000000e
+	fromColumn: fact_reviews.product_id
+	toColumn: dim_product.'Product ID'
+
+relationship aa000040-0000-0000-0000-00000000000f
+	fromColumn: fact_reviews.'Created Date'
+	toColumn: dim_date.Date
+	isActive: false
+
+relationship aa000040-0000-0000-0000-000000000010
+	fromColumn: fact_inventory.product_id
+	toColumn: dim_product.'Product ID'
+
