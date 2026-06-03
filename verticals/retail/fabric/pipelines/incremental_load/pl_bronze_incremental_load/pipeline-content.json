@@ -1,6 +1,6 @@
 {
   "properties": {
-    "description": "Bronze incremental load. Same structure as pl_bronze_initial_load (the underlying notebooks are idempotent + merge-on-key, so re-running is the incremental path). Intended to be invoked from a daily/hourly schedule -- or from pl_incremental_load -- after the initial backfill is complete.",
+    "description": "Bronze incremental load. The 'incremental' part for OLTP retail data is fully driven by the SQL Mirror (continuous CDC) -- so this pipeline only needs to refresh the bronze sources that are NOT mirrored. Today that means the daily weather pull. Synthetic-activity generation runs as the first step of pl_incremental_load (not part of bronze) and self-polls the mirror before returning.",
     "activities": [
       {
         "name": "Weather catchup",

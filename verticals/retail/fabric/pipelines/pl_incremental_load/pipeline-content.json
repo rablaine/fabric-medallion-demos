@@ -1,11 +1,37 @@
 {
   "properties": {
-    "description": "Top-level medallion incremental orchestrator. Runs pl_bronze_incremental_load -> pl_silver_incremental_load -> pl_gold_incremental_load in sequence. All child pipelines live in the bronze workspace alongside this one.",
+    "description": "Top-level medallion incremental orchestrator. Runs simulate-incremental notebook (fabricates SQL activity + self-polls the mirror until landed) -> pl_bronze_incremental_load -> pl_silver_incremental_load -> pl_gold_incremental_load in sequence. The simulator is OUTSIDE the bronze pipeline so it's visually clear it's synthetic data generation, not part of the medallion.",
     "activities": [
+      {
+        "name": "Simulate synthetic OLTP activity",
+        "description": "Runs 10_simulate_incremental_activity. Sized by (now - watermark) so cadence-independent. Inserts orders/items/payments/shipments/returns/reviews/customers, decrements inventory, applies low-volume churn to employees/promotions/suppliers/products. Final cell polls the bronze mirror for this run's order_number prefix and returns only when ~95% of new orders are queryable in OneLake -- replaces a blind wait.",
+        "type": "TridentNotebook",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 60,
+          "secureInput": false,
+          "secureOutput": false
+        },
+        "typeProperties": {
+          "notebookId": "__SIM_NOTEBOOK_ID__",
+          "workspaceId": "__BRONZE_WORKSPACE_ID__",
+          "parameters": {
+            "bronze_workspace_id": { "value": "__BRONZE_WORKSPACE_ID__", "type": "string" },
+            "mirror_item_id":      { "value": "__MIRROR_ITEM_ID__",      "type": "string" }
+          }
+        }
+      },
       {
         "name": "Bronze incremental",
         "type": "ExecutePipeline",
-        "dependsOn": [],
+        "dependsOn": [
+          {
+            "activity": "Simulate synthetic OLTP activity",
+            "dependencyConditions": [ "Succeeded" ]
+          }
+        ],
         "policy": {
           "secureInput": false
         },

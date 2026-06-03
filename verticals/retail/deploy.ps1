@@ -1685,6 +1685,9 @@ $fullIncPl = New-FabricDataPipelineFromFile `
         '__BRONZE_INCREMENTAL_LOAD_PIPELINE_ID__'  = $bronzeIncPl.id
         '__SILVER_INCREMENTAL_LOAD_PIPELINE_ID__'  = $silverIncPl.id
         '__GOLD_INCREMENTAL_LOAD_PIPELINE_ID__'    = $goldIncPl.id
+        '__SIM_NOTEBOOK_ID__'                      = $simNb.id
+        '__BRONZE_WORKSPACE_ID__'                  = $workspaces['1-bronze'].id
+        '__MIRROR_ITEM_ID__'                       = $mirror.id
     }
 Write-Ok "  pipeline id=$($fullIncPl.id)"
 
