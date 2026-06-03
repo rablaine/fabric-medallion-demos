@@ -1721,6 +1721,28 @@ $smHr = New-FabricSemanticModel `
 Write-Ok "  id=$($smHr.id)"
 
 # -----------------------------------------------------------------------------
+# Reports (PBIR-Legacy) -- two per semantic model, wired via byConnection.
+# Source: fabric/reports/<slug>/  (regenerate with tools/build-reports.ps1).
+# -----------------------------------------------------------------------------
+$reportsRoot = Join-Path $PSScriptRoot 'fabric' 'reports'
+$reports = @(
+    @{ slug='rpt_sales_overview';   name='Retail - Sales Overview';     smId=$smRetail.id }
+    @{ slug='rpt_sales_operations'; name='Retail - Operations';         smId=$smRetail.id }
+    @{ slug='rpt_hr_workforce';     name='HR - Workforce Overview';     smId=$smHr.id     }
+    @{ slug='rpt_hr_attrition';     name='HR - Attrition & Tenure';     smId=$smHr.id     }
+)
+foreach ($rpt in $reports) {
+    Write-Step "Creating report '$($rpt.name)' in gold workspace"
+    $r = New-FabricReport `
+        -Token $fabricToken `
+        -WorkspaceId $workspaces['3-gold'].id `
+        -Name $rpt.name `
+        -DefinitionRoot (Join-Path $reportsRoot $rpt.slug) `
+        -Replacements @{ '__SEMANTIC_MODEL_ID__' = $rpt.smId }
+    Write-Ok "  id=$($r.id)"
+}
+
+# -----------------------------------------------------------------------------
 # Done (checkpoint 1: bronze-only, ready for manual silver/gold build-out)
 # -----------------------------------------------------------------------------
 Write-Done
@@ -1781,6 +1803,8 @@ Write-Host "    Sprocs:         sp_RecreateDim* (x9), sp_RecreateFact* (x9) -- a
 Write-Host "    (Populated by pl_gold_initial_load -- or pl_initial_load. Empty placeholder rows until silver_curated runs at least once.)"
 Write-Host "  Semantic models:  Retail Sales (orders/sales/payments/shipments/returns/reviews/inventory; DirectLake)"
 Write-Host "                    HR & Workforce (dim_employee with headcount/attrition/tenure/payroll measures; DirectLake)"
+Write-Host "  Reports:          Retail - Sales Overview, Retail - Operations"
+Write-Host "                    HR - Workforce Overview, HR - Attrition & Tenure"
 Write-Host ""
 Write-Host "Streaming source:" -ForegroundColor Yellow
 Write-Host "  Eventhouse:       contoso_retail_events_eh    (default KQL DB removed; events live in 'contoso_retail_events')"

@@ -1443,3 +1443,163 @@ function New-FabricSemanticModel {
 
 
 
+
+function New-FabricReport {
+    <#
+    .SYNOPSIS
+        Creates (or updates) a Fabric Report from a local PBIR-Legacy definition
+        folder (.platform + definition.pbir + report.json).
+    .DESCRIPTION
+        Same upload pattern as New-FabricSemanticModel: walks $DefinitionRoot,
+        base64-encodes every file (skipping .platform), applies optional text
+        $Replacements to text payloads, and POSTs as a Fabric Report item.
+        Idempotent against report display name. Use $Replacements to inject
+        __SEMANTIC_MODEL_ID__ into definition.pbir.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$DefinitionRoot,
+        [hashtable]$Replacements,
+        [string]$FolderId
+    )
+    if (-not (Test-Path $DefinitionRoot)) {
+        throw "Report definition root not found: $DefinitionRoot"
+    }
+
+    $rootFull = (Resolve-Path $DefinitionRoot).Path
+    $files = Get-ChildItem -Path $rootFull -Recurse -File |
+        Where-Object { $_.Name -ne '.platform' }
+
+    $parts = @()
+    foreach ($f in $files) {
+        $rel = $f.FullName.Substring($rootFull.Length).TrimStart('\','/').Replace('\','/')
+        $isText = $f.Extension -in @('.pbir', '.json')
+        if ($isText) {
+            $text = Get-Content -Raw -Path $f.FullName
+            if ($Replacements) {
+                foreach ($k in $Replacements.Keys) {
+                    $text = $text.Replace($k, [string]$Replacements[$k])
+                }
+            }
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+        } else {
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+        }
+        $parts += @{
+            path        = $rel
+            payload     = [Convert]::ToBase64String($bytes)
+            payloadType = 'InlineBase64'
+        }
+    }
+
+    $definition = @{ parts = $parts }
+
+    $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/reports"
+    $existing = $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+
+    if ($existing) {
+        Write-Verbose "Report '$Name' exists (id=$($existing.id)); updating definition."
+        $body = @{ definition = $definition }
+        $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/reports/$($existing.id)/updateDefinition" -Body $body
+        if ($r.Status -eq 202 -and $r.OperationLocation) {
+            Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "update report $Name" | Out-Null
+        }
+        return $existing
+    }
+
+    $body = @{
+        displayName = $Name
+        definition  = $definition
+    }
+    if ($FolderId) { $body.folderId = $FolderId }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/reports" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create report $Name" | Out-Null
+        $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/reports"
+        return $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    }
+    return $r.Body
+}
+
+function New-FabricReport {
+    <#
+    .SYNOPSIS
+        Creates (or updates) a Fabric Report from a local PBIR-Legacy definition
+        folder (.platform + definition.pbir + report.json).
+    .DESCRIPTION
+        Same upload pattern as New-FabricSemanticModel: walks $DefinitionRoot,
+        base64-encodes every file (skipping .platform), applies optional text
+        $Replacements to text payloads, and POSTs as a Fabric Report item.
+        Idempotent against report display name. Use $Replacements to inject
+        __SEMANTIC_MODEL_ID__ into definition.pbir.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$DefinitionRoot,
+        [hashtable]$Replacements,
+        [string]$FolderId
+    )
+    if (-not (Test-Path $DefinitionRoot)) {
+        throw "Report definition root not found: $DefinitionRoot"
+    }
+
+    $rootFull = (Resolve-Path $DefinitionRoot).Path
+    $files = Get-ChildItem -Path $rootFull -Recurse -File |
+        Where-Object { $_.Name -ne '.platform' }
+
+    $parts = @()
+    foreach ($f in $files) {
+        $rel = $f.FullName.Substring($rootFull.Length).TrimStart('\','/').Replace('\','/')
+        $isText = $f.Extension -in @('.pbir', '.json')
+        if ($isText) {
+            $text = Get-Content -Raw -Path $f.FullName
+            if ($Replacements) {
+                foreach ($k in $Replacements.Keys) {
+                    $text = $text.Replace($k, [string]$Replacements[$k])
+                }
+            }
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+        } else {
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+        }
+        $parts += @{
+            path        = $rel
+            payload     = [Convert]::ToBase64String($bytes)
+            payloadType = 'InlineBase64'
+        }
+    }
+
+    $definition = @{ parts = $parts }
+
+    $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/reports"
+    $existing = $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+
+    if ($existing) {
+        Write-Verbose "Report '$Name' exists (id=$($existing.id)); updating definition."
+        $body = @{ definition = $definition }
+        $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/reports/$($existing.id)/updateDefinition" -Body $body
+        if ($r.Status -eq 202 -and $r.OperationLocation) {
+            Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "update report $Name" | Out-Null
+        }
+        return $existing
+    }
+
+    $body = @{
+        displayName = $Name
+        definition  = $definition
+    }
+    if ($FolderId) { $body.folderId = $FolderId }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/reports" -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create report $Name" | Out-Null
+        $list = Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/reports"
+        return $list.Body.value | Where-Object { $_.displayName -eq $Name } | Select-Object -First 1
+    }
+    return $r.Body
+}
