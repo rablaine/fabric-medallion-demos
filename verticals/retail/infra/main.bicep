@@ -1,11 +1,15 @@
 // =============================================================================
-// Contoso Tech - Retail Vertical (Phase 1: SQL + Storage)
+// Contoso Tech - Retail Vertical (Azure infrastructure)
 // =============================================================================
-// First deploy scope:
-//   - Azure SQL Server + Database
+// Deploys:
+//   - VNet with delegated gateway subnet + Private Endpoint subnet
+//   - Azure SQL Server + Database (AAD-only) + Private Endpoint + private DNS
 //   - Storage account (ADLS Gen2) with raw + curated containers
+//   - Azure Functions (Flex Consumption) clickstream emitter app
 //
-// Coming later: Cosmos DB, Event Hub, Fabric workspace, Purview, Key Vault
+// Fabric workspaces, lakehouses, mirror, Eventhouse / KQL DB / Eventstream,
+// warehouse, semantic models, reports, and data agents are all created
+// post-deploy by deploy.ps1 via the Fabric REST API (not Bicep).
 // =============================================================================
 
 targetScope = 'resourceGroup'
@@ -28,9 +32,9 @@ param clientIpAddress string
 
 @description('Common tags')
 param tags object = {
-  Project: 'Contoso Data Estate'
+  Project: 'Fabric Data Estate Builder'
   Vertical: 'retail'
-  ManagedBy: 'Contoso Data Estate Builder'
+  ManagedBy: 'Fabric Data Estate Builder'
 }
 
 // -----------------------------------------------------------------------------
@@ -57,6 +61,8 @@ var funcStorageAcc = toLower('${resourcePrefix}rtfn${substring(suffix, 0, 8)}') 
 var funcPlanName   = toLower('${resourcePrefix}-retail-funcplan-${substring(suffix, 0, 6)}')
 var funcAiName     = toLower('${resourcePrefix}-retail-funcai-${substring(suffix, 0, 6)}')
 var fabricCapacity = toLower('${resourcePrefix}retail${substring(suffix, 0, 8)}')
+var vnetName       = toLower('${resourcePrefix}-retail-vnet-${substring(suffix, 0, 6)}')
+var sqlPeName      = toLower('${resourcePrefix}-retail-sql-pe-${substring(suffix, 0, 6)}')
 
 // -----------------------------------------------------------------------------
 // Fabric capacity (F8). Provisioned in the same bicep run as storage/sql/func
@@ -106,6 +112,32 @@ module sql 'modules/sql.bicep' = {
 }
 
 // -----------------------------------------------------------------------------
+// VNet (gateway delegated subnet + PE subnet) + Private Endpoint to SQL +
+// private DNS zone. Fabric VNet Data Gateway lands in snet-gateway and reaches
+// SQL via the PE while publicNetworkAccess is Disabled.
+// -----------------------------------------------------------------------------
+module network 'modules/network.bicep' = {
+  name: 'network-deploy'
+  params: {
+    vnetName: vnetName
+    location: location
+    tags: tags
+  }
+}
+
+module sqlPe 'modules/sql-pe.bicep' = {
+  name: 'sql-pe-deploy'
+  params: {
+    peName: sqlPeName
+    location: location
+    sqlServerId: sql.outputs.serverId
+    subnetId: network.outputs.peSubnetId
+    vnetId: network.outputs.vnetId
+    tags: tags
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Function App (clickstream emitter, Linux Flex Consumption)
 // Pushes events into a Fabric Eventstream CustomEndpoint source. The
 // EVENTHUB_CONNECTION_STRING app setting is populated by deploy.ps1 after
@@ -140,3 +172,5 @@ output uniqueSuffix       string = substring(suffix, 0, 8)
 output functionAppName    string = funcApp.outputs.appName
 output functionHostname   string = funcApp.outputs.defaultHostname
 output fabricCapacityName string = fabricCapacity
+output vnetName           string = network.outputs.vnetName
+output gatewaySubnetName  string = network.outputs.gatewaySubnetName

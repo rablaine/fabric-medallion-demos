@@ -1,10 +1,5 @@
-# Retail Governance (Purview)
+# Retail Governance
 
-> TODO: Define Purview business glossary, classifications, and scan rules.
+> Placeholder. No standalone governance product (Purview, Unity, etc.) is deployed by this vertical.
 
-## Planned
-
-- Business glossary terms (Customer, Order, SKU, Inventory, etc.)
-- Sensitivity labels (PII for customer data, financial for transactions)
-- Scan rules for Azure SQL, ADLS, Cosmos DB
-- Lineage tracking from source → lakehouse → reports
+Governance today is whatever the Fabric tenant + Azure SQL provide out of the box: SQL AAD-only auth, Fabric workspace RBAC, Direct Lake semantic-model permissions, and the sensitivity classifications listed in [../schema/README.md](../schema/README.md).

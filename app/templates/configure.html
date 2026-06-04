@@ -1,11 +1,10 @@
 {% extends "base.html" %}
 
-{% block title %}Configure {{ vertical.name }} - Contoso{% endblock %}
+{% block title %}Configure {{ vertical.name }} &mdash; Fabric Data Estate Builder{% endblock %}
 
 {% block content %}
 <section class="configure">
-    <a href="/verticals/{{ vertical.id }}" class="back-link">&larr; Back to {{ vertical.name }}</a>
-    <h1>Configure {{ vertical.name }} Deployment</h1>
+    <h1>Configure the {{ vertical.name }} Data Estate</h1>
     <p>Set your deployment parameters, then download a customized package that you can run with your own Azure CLI credentials.</p>
 
     <form method="post" action="/deploy/{{ vertical.id }}/package" class="config-form">
@@ -27,8 +26,7 @@
             </select>
             <small>Limited to regions that support every feature this demo
             deploys: Microsoft Fabric F8 capacity, Azure Functions Flex
-            Consumption (FC1), Azure SQL serverless Gen5, Event Hubs Standard,
-            and ADLS Gen2.</small>
+            Consumption (FC1), Azure SQL serverless Gen5, and ADLS Gen2.</small>
         </label>
 
         <label>
@@ -52,61 +50,208 @@
 
     <dialog id="walkthrough-modal" class="walkthrough-modal">
         <button type="button" class="walkthrough-close" aria-label="Close" onclick="closeWalkthrough()">&times;</button>
-        <h2>What you'll get &amp; what happens when you run it</h2>
+        <h2>What <code>deploy.cmd</code> does, step by step</h2>
         <p>
-            You fill in the form, click <em>Download Deployment Package</em>, and
-            get a zip with your settings baked in. Inside the zip is <code>deploy.cmd</code>.
-            Running it prompts for your Azure account + subscription, then deploys
-            an end-to-end retail data estate in one shot (typically 25-40 minutes).
+            You fill in the form above, click <em>Download Deployment Package</em>,
+            and get a zip with your settings baked in. Inside the zip is
+            <code>deploy.cmd</code>. Running it prompts for your Azure account +
+            subscription, then deploys an end-to-end {{ vertical.name|lower }}
+            data estate in one shot (typically 25-40 minutes). Expand any step
+            below for the details.
         </p>
 
-        <h3>Azure infrastructure (Bicep)</h3>
-        <ol class="deploy-steps">
-            <li><strong>Resource group</strong> in your chosen region</li>
-            <li><strong>Azure SQL</strong> serverless Gen5 with the retail OLTP schema + change tracking</li>
-            <li><strong>ADLS Gen2</strong> with <code>raw</code> + <code>curated</code> containers (supplier Parquet, marketing CSV land here)</li>
-            <li><strong>Event Hubs Standard</strong> for live clickstream</li>
-            <li><strong>Azure Functions (Flex Consumption)</strong> emitting synthetic clickstream into Event Hubs</li>
-            <li><strong>Fabric F8 capacity</strong> with you as admin</li>
-        </ol>
+        <details class="deploy-step">
+            <summary>Stand up the Azure resource group and core services</summary>
+            <div class="deploy-step-body">
+                <p>One Bicep deploy creates everything in your subscription:</p>
+                <ul>
+                    <li>Resource group in your chosen region</li>
+                    <li><strong>VNet</strong> (<code>10.50.0.0/16</code>) with two subnets &mdash; one delegated to the Fabric VNet Data Gateway, one for the SQL Private Endpoint</li>
+                    <li><strong>Azure SQL</strong> serverless Gen5, AAD-only auth, with the retail OLTP schema and change tracking applied in the background</li>
+                    <li><strong>Private Endpoint</strong> to the SQL server in the PE subnet, plus a <code>privatelink.database.windows.net</code> private DNS zone linked to the VNet</li>
+                    <li><strong>ADLS Gen2</strong> storage account with <code>raw/</code> and <code>curated/</code> containers (supplier Parquet, marketing CSV, weather data all land here)</li>
+                    <li><strong>Azure Functions</strong> (Flex Consumption / FC1) app that emits synthetic clickstream &mdash; later wired straight to the Fabric Eventstream's CustomEndpoint (no Azure Event Hubs namespace needed)</li>
+                    <li><strong>Microsoft Fabric F8 capacity</strong> with you assigned as admin</li>
+                </ul>
+            </div>
+        </details>
 
-        <h3>Fabric: bronze workspace</h3>
-        <ol class="deploy-steps">
-            <li><strong>Bronze workspace</strong> + lakehouse + workspace identity</li>
-            <li><strong>Seed notebook</strong> populates SQL with a fiscal quarter of data (customers, products, orders, payments, shipments, returns, reviews) and drops 90 days of supplier Parquet + marketing CSV into ADLS <code>raw/</code></li>
-            <li><strong>SQL Mirror</strong> of every retail table into the bronze lakehouse as Delta &mdash; real-time, no pipeline</li>
-            <li><strong>OneLake shortcut</strong> <code>Files/raw</code> &rarr; ADLS <code>raw/</code></li>
-            <li><strong>Eventhouse + KQL DB</strong> with a Clickstream table; <strong>Eventstream</strong> wires Event Hubs &rarr; KQL DirectIngestion</li>
-            <li><strong>Clickstream backfill notebook</strong> seeds ~2M historical events into KQL</li>
-            <li><strong>All pipelines live here</strong> (orchestration hub): weather ingest, bronze initial / incremental load, silver initial / incremental load, gold initial / incremental load</li>
-        </ol>
+        <details class="deploy-step">
+            <summary>Create a service principal for Fabric &harr; SQL mirroring</summary>
+            <div class="deploy-step-body">
+                <p>Fabric VNet gateway connections require a service principal (workspace identity isn't accepted). The script:</p>
+                <ul>
+                    <li>Creates a 1-year SP (<code>sp-fabric-mirror-&lt;suffix&gt;</code>) scoped only to your subscription as <em>Reader</em></li>
+                    <li>Adds it as a contained user in <code>contoso_retail</code> with <code>db_owner</code> &mdash; just enough to drive change-tracking based mirroring</li>
+                    <li>Does the same for the bronze Fabric workspace identity, so workspace-owned objects can talk to SQL too</li>
+                </ul>
+            </div>
+        </details>
 
-        <h3>Fabric: silver workspace</h3>
-        <ol class="deploy-steps">
-            <li><strong>silver_raw</strong> lakehouse with shortcuts to the bronze mirror tables</li>
-            <li><strong>silver_curated</strong> lakehouse with full-load notebooks (retail, weather, clickstream, HR, ops) that build conformed dimensions and curated facts</li>
-            <li>Notebooks only &mdash; the silver pipelines that run them live in the bronze workspace</li>
-        </ol>
+        <details class="deploy-step">
+            <summary>Wire up private SQL connectivity (VNet Data Gateway + Managed Private Endpoint)</summary>
+            <div class="deploy-step-body">
+                <p>This is the piece that lets Fabric reach Azure SQL over the customer VNet with the firewall closed:</p>
+                <ul>
+                    <li>Creates a <strong>Fabric VNet Data Gateway</strong> in the delegated gateway subnet (polls until <em>Live</em>)</li>
+                    <li>Creates a <strong>gateway-bound SQL connection</strong> using the SP, with connection testing enabled so a bad firewall surfaces immediately</li>
+                    <li>Grants the Azure SQL server's system-assigned managed identity <em>Contributor</em> on the bronze workspace (required for Fabric mirroring)</li>
+                    <li>Creates a <strong>Workspace Managed Private Endpoint</strong> from bronze to your SQL server, polls the PE connection on the customer side, and auto-approves it</li>
+                    <li>Flips <code>publicNetworkAccess=Disabled</code> on the SQL server and removes the deployer's temp firewall rule &mdash; from here on all SQL traffic is private</li>
+                </ul>
+            </div>
+        </details>
 
-        <h3>Fabric: gold workspace</h3>
-        <ol class="deploy-steps">
-            <li><strong>Gold warehouse</strong> with DDL + stored procedures that rebuild gold star schema (fact_orders, fact_payments, fact_shipments, fact_returns, fact_reviews, dim_store, dim_product, dim_customer, dim_employee, &hellip;)</li>
-            <li><strong>Shortcut lakehouse</strong> back to silver_curated so the gold sprocs can CTAS from curated data</li>
-            <li><strong>Semantic models</strong> (Direct Lake): Retail Sales, HR &amp; Workforce</li>
-            <li><strong>Power BI reports:</strong> Retail &mdash; Sales Overview, Retail &mdash; Operations Pulse, HR &mdash; Workforce Overview, HR &mdash; Attrition &amp; Tenure (organized into Retail / HR folders)</li>
-            <li><strong>Data agents</strong> for natural-language Q&amp;A over the gold semantic models</li>
-        </ol>
+        <details class="deploy-step">
+            <summary>Build the bronze Fabric workspace (lakehouse, mirror, raw shortcut, real-time)</summary>
+            <div class="deploy-step-body">
+                <p>Bronze is the orchestration hub and the landing layer for everything raw:</p>
+                <ul>
+                    <li><strong>Workspace</strong> + workspace identity + <code>contoso_retail_bronze</code> lakehouse</li>
+                    <li><strong>Seed notebook</strong> populates SQL with a fiscal quarter of data (customers, products, orders, payments, shipments, returns, reviews) and drops 90 days of supplier Parquet + marketing CSV into ADLS <code>raw/</code></li>
+                    <li><strong>SQL Mirror</strong> of every retail table into the bronze lakehouse as Delta &mdash; near real-time, no pipeline</li>
+                    <li><strong>OneLake shortcut</strong> <code>Files/raw</code> &rarr; ADLS <code>raw/</code></li>
+                    <li><strong>Eventhouse + KQL DB</strong> with a Clickstream table; <strong>Eventstream</strong> CustomEndpoint receives events from the Function emitter and DirectIngests into the KQL <code>Clickstream</code> table</li>
+                    <li><strong>Clickstream backfill notebook</strong> seeds ~2M historical events into KQL</li>
+                    <li><strong>All pipelines live here</strong>: weather ingest, bronze / silver / gold initial + incremental loads, and the top-level <code>pl_initial_load</code> / <code>pl_incremental_load</code> medallion orchestrators</li>
+                </ul>
+            </div>
+        </details>
 
+        <details class="deploy-step">
+            <summary>Build the silver workspace (raw shortcuts + curated notebooks)</summary>
+            <div class="deploy-step-body">
+                <ul>
+                    <li><strong><code>silver_raw</code></strong> lakehouse with shortcuts to all 19 bronze mirror tables (Tables/dbo)</li>
+                    <li><strong><code>silver_curated</code></strong> lakehouse with five full-load notebooks: <code>silver_curated_retail_full</code>, <code>silver_curated_weather_full</code>, <code>silver_curated_clickstream_full</code>, <code>silver_curated_hr_full</code>, <code>silver_curated_ops_full</code> &mdash; they build conformed dimensions and curated facts</li>
+                    <li>Notebooks only &mdash; the <code>pl_silver_*</code> pipelines that run them live in the bronze workspace and invoke them cross-workspace</li>
+                </ul>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>Build the gold workspace (warehouse, semantic models, reports, data agents)</summary>
+            <div class="deploy-step-body">
+                <ul>
+                    <li><strong>Gold warehouse</strong> with DDL + sprocs that rebuild the star schema &mdash; 9 dims (date, customer, product, store, channel, employee, supplier, warehouse, promotion) and 9 facts (orders, sales, weather_daily, sessions, inventory, payments, returns, reviews, shipments). Every sproc is <code>DROP TABLE IF EXISTS</code> + CTAS, so re-running them <em>is</em> the incremental path</li>
+                    <li><strong>Shortcut lakehouse</strong> back to <code>silver_curated</code> so the gold sprocs can read curated data via 3-part names</li>
+                    <li><strong>Semantic models</strong> (Direct Lake): <em>Retail Sales</em>, <em>HR &amp; Workforce</em></li>
+                    <li><strong>Power BI reports:</strong> Retail &mdash; Sales Overview, Retail &mdash; Operations Pulse, HR &mdash; Workforce Overview, HR &mdash; Attrition &amp; Tenure (organized into Retail / HR folders)</li>
+                    <li><strong>Data agents</strong> for natural-language Q&amp;A over the gold semantic models</li>
+                </ul>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>Deploy the clickstream emitter and finish background jobs</summary>
+            <div class="deploy-step-body">
+                <ul>
+                    <li>Deploys the Azure Function via OneDeploy (AAD-authenticated) and wires <code>EVENTHUB_CONNECTION_STRING</code> into app settings</li>
+                    <li>Syncs the Flex Consumption triggers so the timer fires (~every 30s, ~50 events/fire)</li>
+                    <li>Waits on the parallel background work &mdash; seed, backfill, mirror snapshot, gold warehouse create &mdash; before declaring done</li>
+                    <li>Scales the SQL DB down to <code>GP_S_Gen5_4</code> for idle-cheap cost while you explore</li>
+                </ul>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>(Optional) Run the initial medallion load end-to-end</summary>
+            <div class="deploy-step-body">
+                <p>
+                    If you leave the auto-run box checked, the script triggers
+                    <code>pl_initial_load</code> at the very end. That fans out
+                    bronze &rarr; silver &rarr; gold so the warehouse, semantic
+                    models, and reports are populated before the script exits.
+                    Uncheck it if you want infrastructure first, then to run the
+                    pipeline yourself from the Fabric portal.
+                </p>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>What it costs to run</summary>
+            <div class="deploy-step-body">
+                <p>
+                    Rough US East list pricing as of mid-2026. Treat as a
+                    ballpark &mdash; your actual bill depends on region, reserved
+                    capacity, idle time, and how much you exercise the stack.
+                </p>
+                <table class="price-table">
+                    <thead>
+                        <tr><th>Resource</th><th>SKU</th><th>If you leave it running 24/7</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Microsoft Fabric capacity</strong></td>
+                            <td>F8 (pay-as-you-go)</td>
+                            <td>~$1.05/hr &rarr; ~$770/month <em>(pause when idle to drop to ~$0)</em></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Azure SQL Database</strong></td>
+                            <td>GP_S_Gen5_4 serverless, 0.5&ndash;4 vCore, auto-pause 60 min</td>
+                            <td>~$0.58/vCore-hr active, ~$0.12/GB-month idle &rarr; typically <strong>$15&ndash;40/month</strong> for demo use (paused most of the time)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>ADLS Gen2 storage</strong></td>
+                            <td>Standard_LRS, ~5&ndash;20 GB demo data</td>
+                            <td>&lt; <strong>$1/month</strong></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Azure Functions</strong></td>
+                            <td>Flex Consumption (FC1), 512 MB, ~30s timer</td>
+                            <td>Free grant covers it &rarr; effectively <strong>$0</strong> for a single demo</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Function storage account</strong></td>
+                            <td>Standard_LRS (runtime + deployment package)</td>
+                            <td>&lt; <strong>$1/month</strong></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Application Insights</strong></td>
+                            <td>Classic, pay-as-you-go</td>
+                            <td>&lt; <strong>$1/month</strong> at this telemetry volume</td>
+                        </tr>
+                        <tr>
+                            <td><strong>SQL Private Endpoint</strong></td>
+                            <td>1 endpoint + private DNS zone</td>
+                            <td>~$7/month + minimal data processing</td>
+                        </tr>
+                        <tr>
+                            <td><strong>VNet + subnets</strong></td>
+                            <td>Standard VNet</td>
+                            <td><strong>$0</strong> (VNet itself is free)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Fabric VNet Data Gateway</strong></td>
+                            <td>Bills against the F8 above</td>
+                            <td>Included in Fabric capacity &mdash; <strong>no separate charge</strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p>
+                    <strong>Realistic total:</strong> if you pause the F8 capacity
+                    when you're not actively demoing, you're looking at roughly
+                    <strong>$25&ndash;50/month</strong> for the whole estate. If
+                    you leave F8 running 24/7, add ~$770/month for the capacity
+                    on top of that. Run <code>teardown.cmd</code> when you're done
+                    to drop it to $0.
+                </p>
+            </div>
+        </details>
+
+        <h3>When it's done</h3>
         <p>
-            <strong>What you can do when it's done:</strong> open
-            <a href="https://app.fabric.microsoft.com" target="_blank" rel="noopener">Fabric</a>,
+            Open <a href="https://app.fabric.microsoft.com" target="_blank" rel="noopener">Fabric</a>,
             browse the three workspaces, run the reports, chat with the data agents,
-            and trigger the incremental pipelines (or the <em>simulate-incremental</em>
-            notebook) to fabricate a new day of activity and watch it propagate
+            and trigger the incremental pipelines any time to backfill from the last sync
+            up to <em>now</em> (whether that's an hour or five months) and watch it propagate
             bronze &rarr; silver &rarr; gold &rarr; reports.
         </p>
         <p>
-            <em>When you're done, run <code>teardown.cmd</code> from the same package and it'll tear down everything that was built.</em>
+            <em>When you're done, run <code>teardown.cmd</code> from the same package and it'll tear down everything that was built &mdash; MPEs, workspaces, gateway, SP, then the resource group.</em>
+        </p>
+        <p>
+            <em>Heads up: the gateway subnet's PowerPlatform service association link releases asynchronously, so deleting the resource group can fail with the VNet still attached. If that happens, wait ~1 hour and re-run <code>az group delete --name &lt;rg&gt; --yes</code> (or just click <em>Delete resource group</em> again in the Azure portal). This is normal Azure behavior, not something the teardown script did wrong.</em>
         </p>
     </dialog>
 

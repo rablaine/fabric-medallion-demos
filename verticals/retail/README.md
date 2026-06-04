@@ -1,15 +1,14 @@
 # Retail Vertical
 
-A fictional online retailer "Contoso Commerce" with full Azure data estate.
+Fictional consumer-electronics retailer "Contoso Commerce" with a full Azure data estate: OLTP, batch landing, real-time clickstream, and a Fabric medallion (bronze / silver / gold) on top.
 
 ## What Gets Deployed
 
-- **Azure SQL Database** - Transactional store (customers, products, orders, inventory)
-- **Azure Cosmos DB** - Shopping cart and session state
-- **Azure Data Lake Storage Gen2** - Raw and curated data zones
-- **Microsoft Fabric** - Analytics workspace with Lakehouse and Power BI
-- **Azure Event Hub** - Clickstream event ingestion
-- **Microsoft Purview** - Data catalog and governance
+- **Azure SQL Database** (serverless Gen5) - transactional store (customers, products, orders, inventory, payments, shipments, returns, reviews) with change tracking
+- **Azure Data Lake Storage Gen2** - `raw/` and `curated/` containers
+- **Azure Functions** (Flex Consumption / FC1) - timer-triggered clickstream emitter that writes straight to a Fabric Eventstream CustomEndpoint (no Azure Event Hubs namespace required)
+- **VNet + SQL Private Endpoint + Fabric VNet Data Gateway** - private SQL path; `publicNetworkAccess` is disabled by the end of deploy
+- **Microsoft Fabric F8 capacity** - bronze / silver / gold workspaces with lakehouses, SQL Mirror, Eventhouse + KQL DB, warehouse, semantic models, Power BI reports, and natural-language data agents
 
 ## Data Model
 

@@ -46,3 +46,6 @@ verticals/*/teardown.cmd
 
 # Deploy/teardown transcript logs
 verticals/*/logs/
+
+# Local scratch / experiments
+.scratch/
