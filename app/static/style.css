@@ -47,6 +47,17 @@ footer {
     padding: 2rem;
     font-size: 0.85rem;
 }
+footer p { margin: 0.25rem 0; }
+.footer-links a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    transition: color 120ms ease;
+}
+.footer-links a:hover { color: var(--text); }
+.gh-icon { vertical-align: -2px; }
 
 .hero h1 {
     font-size: 2rem;
@@ -274,6 +285,67 @@ footer {
     line-height: 1.6;
 }
 .deploy-steps li { margin: 0.35rem 0; }
+
+.deploy-step {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 0.4rem 0;
+    overflow: hidden;
+}
+.deploy-step > summary {
+    cursor: pointer;
+    padding: 0.6rem 0.85rem;
+    font-weight: 500;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    color: var(--text);
+}
+.deploy-step > summary::-webkit-details-marker { display: none; }
+.deploy-step > summary::before {
+    content: "›";
+    display: inline-block;
+    color: var(--accent);
+    font-weight: 700;
+    transition: transform 120ms ease;
+    width: 0.75rem;
+    text-align: center;
+}
+.deploy-step[open] > summary::before { transform: rotate(90deg); }
+.deploy-step > summary:hover { background: rgba(78, 161, 255, 0.08); }
+.deploy-step-body {
+    padding: 0.25rem 1rem 0.85rem 2.1rem;
+    color: var(--text-muted);
+    font-size: 0.92rem;
+}
+.deploy-step-body ul {
+    margin: 0.4rem 0;
+    padding-left: 1.1rem;
+}
+.deploy-step-body li { margin: 0.3rem 0; }
+.deploy-step-body strong { color: var(--text); }
+
+.price-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.6rem 0;
+    font-size: 0.88rem;
+}
+.price-table th,
+.price-table td {
+    text-align: left;
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    vertical-align: top;
+}
+.price-table th {
+    color: var(--text);
+    font-weight: 600;
+    border-bottom-color: rgba(255, 255, 255, 0.18);
+}
+.price-table tr:last-child td { border-bottom: none; }
 
 .form-actions {
     display: flex;

@@ -7,7 +7,7 @@
 - `01_ingest_to_lakehouse.ipynb` - SQL → Lakehouse Bronze layer
 - `02_transform_silver.ipynb` - Cleaned/conformed tables
 - `03_build_gold_marts.ipynb` - Star schema for reporting
-- `04_realtime_clickstream.ipynb` - Streaming aggregations from Event Hub
+- `04_realtime_clickstream.ipynb` - Streaming aggregations from the Fabric Eventhouse / KQL DB
 
 ## Planned Power BI Dashboards
 

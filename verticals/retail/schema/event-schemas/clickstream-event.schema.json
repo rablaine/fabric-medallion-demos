@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Clickstream Event",
-  "description": "Web/mobile browsing event published to Event Hub by the storefront.",
+  "description": "Web/mobile browsing event emitted by the storefront to the Fabric Eventstream CustomEndpoint.",
   "type": "object",
   "required": ["event_id", "event_type", "session_id", "timestamp"],
   "properties": {

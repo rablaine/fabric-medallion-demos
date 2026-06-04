@@ -82,12 +82,18 @@ function Write-Teardown {
         [Parameter(Mandatory)][string]$Sub,
         [Parameter(Mandatory)][string]$Tenant,
         [string]$Capacity = '',
-        [object[]]$Workspaces = @()
+        [object[]]$Workspaces = @(),
+        [string]$SpAppId = '',
+        [string]$GatewayId = '',
+        [string[]]$ConnectionIds = @()
     )
 
     $teardownPath = Join-Path $PSScriptRoot 'teardown.ps1'
     $wsLines = if ($Workspaces -and $Workspaces.Count -gt 0) {
         ($Workspaces | ForEach-Object { "    @{ Id = '$($_.id)'; Name = '$($_.displayName)' }" }) -join ",`r`n"
+    } else { '' }
+    $connLines = if ($ConnectionIds -and $ConnectionIds.Count -gt 0) {
+        ($ConnectionIds | ForEach-Object { "    '$_'" }) -join ",`r`n"
     } else { '' }
 
     $teardownBody = @"
@@ -108,8 +114,13 @@ Write-Host "Logging to `$logPath" -ForegroundColor DarkGray
 `$Subscription  = '$Sub'
 `$TenantId      = '$Tenant'
 `$CapacityName  = '$Capacity'
+`$SpAppId       = '$SpAppId'
+`$GatewayId     = '$GatewayId'
 `$Workspaces = @(
 $wsLines
+)
+`$ConnectionIds = @(
+$connLines
 )
 
 . (Join-Path `$PSScriptRoot 'scripts\Fabric.ps1')
@@ -202,14 +213,40 @@ Write-Host 'About to PERMANENTLY DELETE:' -ForegroundColor Yellow
 Write-Host "  Signed in as:   `$(`$pre.Ctx.user.name)"
 Write-Host "  Tenant:         `$TenantId"
 Write-Host "  Subscription:   `$Subscription (`$(`$pre.Ctx.name))"
-Write-Host "  Resource group: `$ResourceGroup"
-if (`$CapacityName) { Write-Host "  Capacity:       `$CapacityName" }
+Write-Host ''
+Write-Host '  Fabric (REST API):' -ForegroundColor Yellow
 if (`$Workspaces.Count -gt 0) {
-    Write-Host '  Fabric workspaces:'
-    foreach (`$w in `$Workspaces) { Write-Host "    - `$(`$w.Name) (`$(`$w.Id))" }
+    Write-Host '    Workspaces (and everything inside them -- lakehouses, mirror, eventhouse,'
+    Write-Host '    KQL DB, eventstream, warehouse, semantic models, reports, data agents,'
+    Write-Host '    notebooks, pipelines, folders, managed private endpoints):'
+    foreach (`$w in `$Workspaces) { Write-Host "      - `$(`$w.Name) (`$(`$w.Id))" }
 } else {
-    Write-Host '  Fabric workspaces: (none -- deploy crashed before workspaces were created)'
+    Write-Host '    Workspaces: (none -- deploy crashed before workspaces were created)'
 }
+if (`$ConnectionIds.Count -gt 0) {
+    Write-Host "    Cloud connections (`$(`$ConnectionIds.Count)): SQL mirror, ADLS shortcut, gold warehouse (gateway-bound)"
+    foreach (`$cid in `$ConnectionIds) { Write-Host "      - `$cid" }
+}
+if (`$GatewayId) {
+    Write-Host "    VNet data gateway: `$GatewayId"
+}
+Write-Host ''
+Write-Host '  Microsoft Entra:' -ForegroundColor Yellow
+if (`$SpAppId) {
+    Write-Host "    Service principal (sp-fabric-mirror-...): `$SpAppId"
+} else {
+    Write-Host '    (no SP recorded)'
+}
+Write-Host ''
+Write-Host '  Azure resource group (and everything in it):' -ForegroundColor Yellow
+Write-Host "    `$ResourceGroup"
+if (`$CapacityName) { Write-Host "      - Fabric capacity:  `$CapacityName (F8)" }
+Write-Host '      - Azure SQL Server + Database'
+Write-Host '      - SQL Private Endpoint + private DNS zone'
+Write-Host '      - ADLS Gen2 storage account'
+Write-Host '      - Azure Functions app + plan + storage'
+Write-Host '      - Application Insights'
+Write-Host '      - VNet + subnets'
 Write-Host ''
 `$ans = Read-Host 'Type YES to proceed'
 if (`$ans -ne 'YES') { Write-Host 'Cancelled.'; exit 0 }
@@ -217,15 +254,124 @@ if (`$ans -ne 'YES') { Write-Host 'Cancelled.'; exit 0 }
 az account set --subscription `$Subscription | Out-Null
 
 if (`$Workspaces.Count -gt 0) {
-    Write-Host 'Deleting Fabric workspaces...' -ForegroundColor Cyan
+    Write-Host 'Deleting workspace managed private endpoints (must precede workspace + RG delete)...' -ForegroundColor Cyan
     `$fabToken = (az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv)
+    `$workspacesWithMpes = @()
     foreach (`$w in `$Workspaces) {
         try {
-            Invoke-FabricRest -Token `$fabToken -Method DELETE -Path "/workspaces/`$(`$w.Id)" | Out-Null
-            Write-Host "  deleted `$(`$w.Name)" -ForegroundColor Green
+            `$mpes = (Invoke-FabricRest -Token `$fabToken -Method GET -Path "/workspaces/`$(`$w.Id)/managedPrivateEndpoints").Body.value
+            if (-not `$mpes -or `$mpes.Count -eq 0) { continue }
+            `$workspacesWithMpes += `$w
+            foreach (`$m in `$mpes) {
+                try {
+                    Invoke-FabricRest -Token `$fabToken -Method DELETE -Path "/workspaces/`$(`$w.Id)/managedPrivateEndpoints/`$(`$m.id)" | Out-Null
+                    Write-Host "  delete submitted: MPE `$(`$m.name) in `$(`$w.Name)" -ForegroundColor Green
+                } catch {
+                    Write-Host "  skip MPE `$(`$m.name) in `$(`$w.Name): `$_" -ForegroundColor DarkYellow
+                }
+            }
         } catch {
-            Write-Host "  skip `$(`$w.Name): `$_" -ForegroundColor DarkYellow
+            Write-Host "  could not list MPEs in `$(`$w.Name): `$_" -ForegroundColor DarkYellow
         }
+    }
+
+    # MPE deletion is async on Fabric's side. Poll until each workspace reports zero MPEs (up to 5 min).
+    if (`$workspacesWithMpes.Count -gt 0) {
+        Write-Host '  Waiting for MPE deprovisioning to complete (up to 5 min)...' -ForegroundColor Cyan
+        `$deadline = (Get-Date).AddMinutes(5)
+        foreach (`$w in `$workspacesWithMpes) {
+            while ((Get-Date) -lt `$deadline) {
+                try {
+                    `$remaining = (Invoke-FabricRest -Token `$fabToken -Method GET -Path "/workspaces/`$(`$w.Id)/managedPrivateEndpoints").Body.value
+                    if (-not `$remaining -or `$remaining.Count -eq 0) {
+                        Write-Host "    `$(`$w.Name): all MPEs gone" -ForegroundColor Green
+                        break
+                    }
+                    Write-Host "    `$(`$w.Name): `$(`$remaining.Count) MPE(s) still deprovisioning..." -ForegroundColor DarkGray
+                } catch {
+                    Write-Host "    `$(`$w.Name): poll error: `$_" -ForegroundColor DarkYellow
+                    break
+                }
+                Start-Sleep -Seconds 15
+            }
+        }
+    }
+
+    Write-Host 'Deleting Fabric workspaces...' -ForegroundColor Cyan
+    `$failedWorkspaces = @()
+    foreach (`$w in `$Workspaces) {
+        `$deleted = `$false
+        for (`$attempt = 1; `$attempt -le 6; `$attempt++) {
+            try {
+                Invoke-FabricRest -Token `$fabToken -Method DELETE -Path "/workspaces/`$(`$w.Id)" | Out-Null
+                Write-Host "  deleted `$(`$w.Name)" -ForegroundColor Green
+                `$deleted = `$true
+                break
+            } catch {
+                `$errMsg = `$_.ToString()
+                if (`$errMsg -match 'WorkspaceContainsManagedEndpoints' -and `$attempt -lt 6) {
+                    Write-Host "  `$(`$w.Name): still has MPEs attached (attempt `$attempt/6), waiting 30s..." -ForegroundColor DarkYellow
+                    Start-Sleep -Seconds 30
+                    continue
+                }
+                Write-Host "  FAILED `$(`$w.Name): `$_" -ForegroundColor Red
+                break
+            }
+        }
+        if (-not `$deleted) { `$failedWorkspaces += `$w }
+    }
+
+    # CRITICAL: if any workspace failed to delete, abort BEFORE dropping the RG.
+    # The RG contains the Fabric capacity; deleting it orphans the workspace
+    # (Fabric MPE/workspace APIs require an attached capacity to function, so
+    # the orphan can't be cleaned up via REST -- you'd need to spin up a new F2
+    # to rescue it). Aborting here keeps the capacity alive so a teardown rerun
+    # can finish the job.
+    if (`$failedWorkspaces.Count -gt 0) {
+        Write-Host ''
+        Write-Host 'ABORTING TEARDOWN.' -ForegroundColor Red
+        Write-Host 'The following Fabric workspace(s) failed to delete:' -ForegroundColor Red
+        foreach (`$w in `$failedWorkspaces) { Write-Host "  - `$(`$w.Name) (`$(`$w.Id))" -ForegroundColor Red }
+        Write-Host ''
+        Write-Host 'The resource group (with the Fabric capacity) has NOT been touched.' -ForegroundColor Yellow
+        Write-Host 'Wait ~5 min for MPE deprovisioning to settle, then re-run teardown.cmd.' -ForegroundColor Yellow
+        Write-Host 'If it fails again, see the troubleshooting notes for orphan-workspace rescue.' -ForegroundColor Yellow
+        Read-Host 'Press Enter to exit'
+        exit 1
+    }
+}
+
+if (`$ConnectionIds.Count -gt 0) {
+    Write-Host 'Deleting Fabric cloud connections...' -ForegroundColor Cyan
+    if (-not `$fabToken) { `$fabToken = (az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv) }
+    foreach (`$cid in `$ConnectionIds) {
+        try {
+            Invoke-FabricRest -Token `$fabToken -Method DELETE -Path "/connections/`$cid" | Out-Null
+            Write-Host "  deleted connection `$cid" -ForegroundColor Green
+        } catch {
+            Write-Host "  skip connection `${cid}: `$_" -ForegroundColor DarkYellow
+        }
+    }
+}
+
+if (`$GatewayId) {
+    Write-Host 'Deleting Fabric VNet data gateway...' -ForegroundColor Cyan
+    try {
+        if (-not `$fabToken) { `$fabToken = (az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv) }
+        Invoke-FabricRest -Token `$fabToken -Method DELETE -Path "/gateways/`$GatewayId" | Out-Null
+        Write-Host "  deleted gateway `$GatewayId" -ForegroundColor Green
+    } catch {
+        Write-Host "  skip gateway `${GatewayId}: `$_" -ForegroundColor DarkYellow
+    }
+}
+
+if (`$SpAppId) {
+    Write-Host 'Deleting service principal...' -ForegroundColor Cyan
+    az ad sp delete --id `$SpAppId 2>`$null
+    if (`$LASTEXITCODE -eq 0) {
+        Write-Host "  deleted SP `$SpAppId" -ForegroundColor Green
+    } else {
+        Write-Host "  skip SP `$SpAppId (already gone or permission denied)" -ForegroundColor DarkYellow
     }
 }
 
@@ -247,6 +393,13 @@ if (`$LASTEXITCODE -ne 0) {
 
 Write-Host ''
 Write-Host 'Teardown initiated. Resource group deletion runs in the background.' -ForegroundColor Green
+Write-Host ''
+Write-Host 'NOTE: The VNet (vnet-fabric-gw) may take up to ~1 hour to release after' -ForegroundColor Yellow
+Write-Host '      the Fabric gateway deletion. If the resource group still exists after' -ForegroundColor Yellow
+Write-Host '      1 hour, re-run:' -ForegroundColor Yellow
+Write-Host "        az group delete --name `$ResourceGroup --yes" -ForegroundColor Yellow
+Write-Host '      This is normal Azure behavior - the PowerPlatform service association' -ForegroundColor Yellow
+Write-Host '      link on the gateway subnet releases asynchronously.' -ForegroundColor Yellow
 Read-Host 'Press Enter to exit'
 "@
     Set-Content -Path $teardownPath -Value $teardownBody -Encoding UTF8
@@ -673,10 +826,41 @@ $sqlToken = (az account get-access-token --resource 'https://database.windows.ne
 # applicationId. Fabric returns both on workspaceIdentity.
 $wsName = $wsIdentity.displayName
 $wsOid  = $wsIdentity.servicePrincipalId
+
+# Service principal for the Fabric VNet Data Gateway SQL connection. Mirror's
+# gateway-bound connection rejects WorkspaceIdentity credentials
+# (DMTS_InvalidCredentialTypeError), so we mint a dedicated SP and grant it
+# the same db_owner role. Created here -- BEFORE the SQL grant block -- so a
+# single Invoke-Sqlcmd grants both principals in one trip.
+Write-Step "Creating service principal for Fabric gateway connection"
+$spName = "sp-fabric-mirror-$($outputs.uniqueSuffix.value)"
+$spJson = az ad sp create-for-rbac --display-name $spName --years 1 --role Reader --scopes "/subscriptions/$($selectedSub.id)" -o json 2>$null
+if ($LASTEXITCODE -ne 0 -or -not $spJson) { throw "az ad sp create-for-rbac failed for $spName" }
+$sp = $spJson | ConvertFrom-Json
+$spAppId  = $sp.appId
+$spSecret = $sp.password
+# Resolve SP objectId (Entra propagation lag: retry up to 90s).
+$spOid = $null
+$spOidDeadline = (Get-Date).AddSeconds(90)
+while ((Get-Date) -lt $spOidDeadline) {
+    $spOid = az ad sp show --id $spAppId --query id -o tsv 2>$null
+    if ($spOid) { break }
+    Start-Sleep -Seconds 5
+}
+if (-not $spOid) { throw "Could not resolve objectId for SP appId=$spAppId after 90s" }
+Write-Ok "  SP $spName created (appId=$spAppId, oid=$spOid)"
+
+# Persist SP appId in teardown so it can be deleted on tear-down.
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId
+
 $ctSql = @"
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'$wsName')
     CREATE USER [$wsName] FROM EXTERNAL PROVIDER WITH OBJECT_ID='$wsOid';
 ALTER ROLE db_owner ADD MEMBER [$wsName];
+
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'$spName')
+    CREATE USER [$spName] FROM EXTERNAL PROVIDER WITH OBJECT_ID='$spOid';
+ALTER ROLE db_owner ADD MEMBER [$spName];
 
 IF NOT EXISTS (SELECT 1 FROM sys.change_tracking_databases WHERE database_id = DB_ID())
     ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON (CHANGE_RETENTION = 2 DAYS, AUTO_CLEANUP = ON);
@@ -717,19 +901,41 @@ while ($true) {
         throw
     }
 }
-Write-Ok "  SQL grants applied; change tracking enabled on retail.* tables"
+Write-Ok "  SQL grants applied for workspace identity + SP; change tracking enabled on retail.* tables"
 
-Write-Step "Creating Fabric SQL connection (workspace identity auth)"
-# This call has skipTestConnection=false, so Fabric actually tries to log in
-# as the workspace identity here. If it succeeds, the auth path works -- and
-# the Fabric-side token cache gets primed.
-$conn = New-FabricSqlConnection `
+# -----------------------------------------------------------------------------
+# Fabric VNet Data Gateway + gateway-bound SQL connection (Service Principal).
+# Replaces the previous WorkspaceIdentity SQL connection. Once this connection
+# is healthy, mirror traffic flows through the gateway -> customer-side PE ->
+# SQL, so publicNetworkAccess on the SQL server can be Disabled.
+# -----------------------------------------------------------------------------
+Write-Step "Creating Fabric VNet Data Gateway in $($outputs.vnetName.value)/$($outputs.gatewaySubnetName.value)"
+$gateway = New-FabricVNetGateway `
+    -Token $fabricToken `
+    -DisplayName "gw-vnet-$($outputs.uniqueSuffix.value)" `
+    -CapacityId $capacityId `
+    -SubscriptionId $selectedSub.id `
+    -ResourceGroupName $config.RESOURCE_GROUP `
+    -VirtualNetworkName $outputs.vnetName.value `
+    -SubnetName $outputs.gatewaySubnetName.value
+Write-Ok "  gateway id=$($gateway.id)"
+
+# Persist gateway id for teardown immediately after create (so a crash mid-deploy still cleans up).
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id
+
+Write-Step "Creating gateway-bound SQL connection (SP auth)"
+$conn = New-FabricSqlGatewayConnection `
     -Token $fabricToken `
     -DisplayName "contoso_retail_sql ($($outputs.sqlServerFqdn.value))" `
+    -GatewayId $gateway.id `
     -SqlServerFqdn $outputs.sqlServerFqdn.value `
     -DatabaseName $outputs.sqlDatabaseName.value `
-    -WorkspaceId $workspaces['1-bronze'].id
+    -TenantId $selectedSub.tenantId `
+    -ServicePrincipalAppId $spAppId `
+    -ServicePrincipalSecret $spSecret
 Write-Ok "  connection id=$($conn.id)"
+
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id -ConnectionIds @($conn.id)
 
 # Mirror requires the Azure SQL logical server's system-assigned managed
 # identity (SAMI) to have write access on the mirror item so the snapshot
@@ -747,6 +953,57 @@ Add-FabricWorkspaceRoleAssignment `
     -PrincipalType 'ServicePrincipal' `
     -Role 'Contributor'
 Write-Ok "  granted Contributor to SQL SAMI $sqlSamiPid (propagating during seed run)"
+
+# -----------------------------------------------------------------------------
+# Workspace Managed Private Endpoint (bronze -> Azure SQL) for Spark notebook
+# JDBC writes (seed, simulate-incremental). Independent of the VNet gateway:
+# gateway carries mirror traffic, MPE carries Spark traffic. Must be Approved
+# + Succeeded BEFORE the seed notebook runs.
+#
+# Kicked off in the BACKGROUND here -- MPE provisioning + customer-side PE
+# approval takes ~4 min, but it has no dependencies on the Fabric scaffolding
+# that follows (silver lakehouse, notebook uploads, pipelines, eventhouse,
+# KQL DB, eventstream). Those run in parallel, then we Wait-Job for MPE just
+# before disabling SQL public network access.
+# -----------------------------------------------------------------------------
+Write-Step "Starting workspace Managed Private Endpoint create to SQL (background; ~4 min)"
+$sqlServerResId = az sql server show -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --query id -o tsv
+$mpeName = "mpe-sql-$($outputs.uniqueSuffix.value)"
+$fabricPs1Path = Join-Path (Join-Path $PSScriptRoot 'scripts') 'Fabric.ps1'
+$mpeJob = Start-ThreadJob -Name 'mpe-create' -ScriptBlock {
+    param($tok, $wsId, $name, $resId, $fabricPs1)
+    . $fabricPs1
+    New-FabricWorkspaceManagedPrivateEndpoint `
+        -Token $tok `
+        -WorkspaceId $wsId `
+        -Name $name `
+        -TargetResourceId $resId `
+        -TargetSubresourceType 'sqlServer' `
+        -RequestMessage 'Auto-approved by contoso deploy.ps1'
+} -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $mpeName, $sqlServerResId, $fabricPs1Path
+Write-Ok "  MPE create job started ($mpeName)"
+
+# -----------------------------------------------------------------------------
+# All public-network operations are done. Mirror uses the gateway, Spark uses
+# the MPE. Flip publicNetworkAccess=Disabled now (instead of waiting until
+# end-of-deploy) so the rest of the deploy validates the zero-touch network
+# path, and so customer policy can't break us if it flips PNA mid-deploy.
+# Also drop the deployer-IP firewall rule so subsequent runs from a different
+# IP don't leave stale rules behind.
+# -----------------------------------------------------------------------------
+Write-Step "Waiting for MPE create to finish (required before PNA can be disabled)"
+$mpeJob | Wait-Job | Out-Null
+$mpe = Receive-Job -Job $mpeJob
+$mpeState = $mpeJob.State
+Remove-Job -Job $mpeJob
+if ($mpeState -ne 'Completed' -or -not $mpe) { throw "MPE create job ended in state '$mpeState' (result=$mpe)" }
+Write-Ok "  MPE $mpeName Approved + Succeeded (id=$($mpe.id))"
+
+Write-Step "Disabling SQL publicNetworkAccess (zero-touch network path from here on)"
+az sql server update -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --set publicNetworkAccess=Disabled --output none
+if ($LASTEXITCODE -ne 0) { throw "Failed to disable publicNetworkAccess on $($outputs.sqlServerName.value)" }
+az sql server firewall-rule delete -g $config.RESOURCE_GROUP -s $outputs.sqlServerName.value -n AllowDeployerClient --yes 2>$null | Out-Null
+Write-Ok "  publicNetworkAccess=Disabled"
 
 # -----------------------------------------------------------------------------
 # Upload seed / simulate-incremental / weather notebooks in parallel.
@@ -1132,6 +1389,8 @@ $adlsConn = New-FabricAdlsGen2Connection `
     -StorageAccountName $outputs.storageAccount.value `
     -WorkspaceId $workspaces['1-bronze'].id
 Write-Ok "  adls connection id=$($adlsConn.id)"
+
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id -ConnectionIds @($conn.id, $adlsConn.id)
 
 $shortcut = New-FabricAdlsShortcut `
     -Token $fabricToken `
@@ -1535,6 +1794,8 @@ $goldWhConn = New-FabricSqlConnection `
     -WorkspaceId $workspaces['1-bronze'].id
 Write-Ok "  connection id=$($goldWhConn.id)"
 
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id -ConnectionIds @($conn.id, $adlsConn.id, $goldWhConn.id)
+
 # -----------------------------------------------------------------------------
 # Silver curated notebooks. Read silver_raw shortcuts + Eventhouse Clickstream
 # table, write normalized Delta tables under silver_curated/Tables/dbo/. Schema
@@ -1853,31 +2114,20 @@ Write-Host "  KQL DB / table:   contoso_retail_events / Clickstream"
 Write-Host "  Eventstream:      clickstream_es (CustomEndpoint -> Eventhouse DirectIngestion)"
 Write-Host "  Emitter:          $($outputs.functionAppName.value) (fires every 30s, ~50 events/fire)"
 Write-Host ""
-$bronzeWsUrl = "https://app.fabric.microsoft.com/groups/$($workspaces['1-bronze'].id)"
-Write-Host "Next steps:" -ForegroundColor Gray
-Write-Host "  - Open the bronze workspace:" -ForegroundColor Gray
-Write-Host "      $bronzeWsUrl" -ForegroundColor Blue
-Write-Host "  - Run pl_initial_load manually from the Fabric portal to populate bronze + silver + gold." -ForegroundColor Gray
-Write-Host "  - Watch the Mirrored DB status; it should reach 'Running' within a minute or two" -ForegroundColor Gray
-Write-Host "  - Browse the lakehouse: Tables (from mirror) and Files/raw (from shortcut)" -ForegroundColor Gray
-Write-Host "  - PAUSE the Fabric capacity in the Azure portal when not in use to save cost" -ForegroundColor Gray
-Write-Host ""
 
 # -----------------------------------------------------------------------------
-# Teardown.ps1 / teardown.cmd were already emitted incrementally during deploy
-# (once after RG create, again after workspaces created). Nothing to do here.
+# Auto-run pl_initial_load FIRST (if enabled) so the Next Steps banner can
+# point the user at live status + reports instead of "go run it yourself".
 # -----------------------------------------------------------------------------
-Write-Host "teardown.ps1 + teardown.cmd are next to deploy.ps1 -- double-click teardown.cmd when ready to clean up." -ForegroundColor Cyan
-Write-Host ""
-
-# Auto-run the initial medallion load based on the checkbox the user ticked
-# on the configure page (defaults to true). When false, skip and print the
-# manual instructions instead.
 $autoRun = ($config['AUTO_RUN_INITIAL_LOAD'] -eq 'true')
+$autoRunSubmitted = $false
+$bronzeWsUrl  = "https://app.fabric.microsoft.com/groups/$($workspaces['1-bronze'].id)"
+$goldWsUrl    = "https://app.fabric.microsoft.com/groups/$($workspaces['3-gold'].id)"
+$pipelineUrl  = "https://app.fabric.microsoft.com/groups/$($workspaces['1-bronze'].id)/pipelines/$($fullPl.id)"
+$monitorUrl   = "https://app.fabric.microsoft.com/monitoringhub"
+
 if ($autoRun) {
     Write-Step "Triggering pl_initial_load (id=$($fullPl.id)) -- AUTO_RUN_INITIAL_LOAD=true"
-    $pipelineUrl = "https://app.fabric.microsoft.com/groups/$($workspaces['1-bronze'].id)/pipelines/$($fullPl.id)"
-    $monitorUrl  = "https://app.fabric.microsoft.com/groups/$($workspaces['1-bronze'].id)/monitoringhub"
     try {
         $kickToken = Get-FabricToken
         # Fire-and-forget: start the run, don't block the deploy script on
@@ -1886,18 +2136,41 @@ if ($autoRun) {
         Invoke-FabricRest -Token $kickToken -Method POST `
             -Path "/workspaces/$($workspaces['1-bronze'].id)/items/$($fullPl.id)/jobs/instances?jobType=Pipeline" | Out-Null
         Write-Ok "pl_initial_load run submitted (runs ~30-60 min in the background)"
-        Write-Host "  Monitor progress in Fabric:" -ForegroundColor Gray
-        Write-Host "    Monitor hub (recommended): $monitorUrl"  -ForegroundColor Blue
-        Write-Host "    Pipeline definition:       $pipelineUrl" -ForegroundColor Blue
-        Write-Host "      (click Run > View run history to see this run)" -ForegroundColor DarkGray
+        $autoRunSubmitted = $true
     } catch {
         Write-Host "Failed to submit pl_initial_load: $_" -ForegroundColor Red
-        Write-Host "Trigger it manually from the Fabric portal:" -ForegroundColor Yellow
-        Write-Host "  $pipelineUrl" -ForegroundColor Blue
+        Write-Host "  Trigger it manually from the Fabric portal: $pipelineUrl" -ForegroundColor Yellow
     }
 } else {
-    Write-Info "AUTO_RUN_INITIAL_LOAD=false -- skipping initial load. Run pl_initial_load yourself from the Fabric portal when ready."
+    Write-Info "AUTO_RUN_INITIAL_LOAD=false -- skipping initial load. You'll run pl_initial_load yourself from the Fabric portal."
 }
+Write-Host ""
+
+Write-Host "Next steps:" -ForegroundColor Gray
+if ($autoRunSubmitted) {
+    Write-Host "  - Your initial medallion load is RUNNING. Watch it in the Fabric Monitor hub:" -ForegroundColor Gray
+    Write-Host "      $monitorUrl" -ForegroundColor Blue
+    Write-Host "      (~30-60 min: bronze SQL mirror snapshot -> silver curated notebooks -> gold warehouse sprocs -> Direct Lake refresh)" -ForegroundColor DarkGray
+    Write-Host "  - When it's done, open the GOLD workspace to find your reports + data agents:" -ForegroundColor Gray
+    Write-Host "      $goldWsUrl" -ForegroundColor Blue
+    Write-Host "      (Retail/ folder: Sales Overview, Operations Pulse. HR/ folder: Workforce, Attrition.)" -ForegroundColor DarkGray
+    Write-Host "  - Chat with the data agents for natural-language Q&A over the gold semantic models." -ForegroundColor Gray
+    Write-Host "  - Trigger pl_incremental_load any time to backfill from the last sync up to NOW (whether that's an hour or 5 months) and watch it propagate through the medallion." -ForegroundColor Gray
+} else {
+    Write-Host "  - Open the bronze workspace and run pl_initial_load to populate bronze + silver + gold:" -ForegroundColor Gray
+    Write-Host "      $pipelineUrl" -ForegroundColor Blue
+    Write-Host "      (or kick it off from the Fabric portal: $bronzeWsUrl)" -ForegroundColor DarkGray
+    Write-Host "  - Once it finishes (~30-60 min), open the gold workspace for reports + data agents:" -ForegroundColor Gray
+    Write-Host "      $goldWsUrl" -ForegroundColor Blue
+}
+Write-Host "  - PAUSE the Fabric capacity in the Azure portal when you're not actively demoing to save cost." -ForegroundColor Gray
+Write-Host ""
+
+# -----------------------------------------------------------------------------
+# Teardown.ps1 / teardown.cmd were already emitted incrementally during deploy
+# (once after RG create, again after workspaces created). Nothing to do here.
+# -----------------------------------------------------------------------------
+Write-Host "teardown.ps1 + teardown.cmd are next to deploy.ps1 -- double-click teardown.cmd when ready to clean up." -ForegroundColor Cyan
 Write-Host ""
 
 # Pause so the user sees the success message before the window closes.

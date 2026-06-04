@@ -1,18 +1,17 @@
 id: retail
 name: Retail
-description: E-commerce retailer with online store, physical inventory, and customer analytics. Demonstrates transactional databases, analytics warehouse, and real-time inventory.
-status: in-progress
+description: A complete retail data estate — transactional Azure SQL, ADLS for batch landings, a Function-app clickstream emitter feeding a Fabric Eventstream, and a Microsoft Fabric medallion (bronze / silver / gold) with semantic models, Power BI reports, and natural-language data agents on top.
+status: available
 azure_services:
-  - Azure SQL Database (transactional - orders, customers, products)
-  - Azure Cosmos DB (session state, shopping cart)
-  - Azure Data Lake Storage Gen2 (raw + curated zones)
-  - Microsoft Fabric (analytics, Power BI)
-  - Azure Event Hub (clickstream events)
-  - Microsoft Purview (governance, catalog)
+  - Azure SQL Database (serverless, retail OLTP schema with change tracking)
+  - Azure Data Lake Storage Gen2 (raw + curated containers)
+  - Azure Functions (Flex Consumption clickstream emitter → Fabric Eventstream CustomEndpoint)
+  - VNet + Private Endpoint + Fabric VNet Data Gateway (private SQL path, no public network access)
+  - Microsoft Fabric F8 capacity with bronze / silver / gold workspaces (lakehouses, SQL mirror, Eventhouse + KQL DB, warehouse, semantic models, Power BI reports, data agents)
 executive_kpis:
-  - Revenue by day / week / month
-  - Top selling products
-  - Inventory turnover rate
-  - Customer lifetime value
-  - Cart abandonment rate
-  - Geographic sales distribution
+  - Revenue by day / week / month / fiscal quarter
+  - Top selling products and categories
+  - Inventory on-hand and turnover by store
+  - Customer lifetime value and segment mix
+  - Live clickstream activity and session funnels
+  - Workforce headcount, attrition, and tenure

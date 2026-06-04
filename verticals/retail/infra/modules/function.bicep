@@ -1,6 +1,7 @@
 // =============================================================================
 // Azure Function App on Flex Consumption (FC1) -- Python 3.11 timer-triggered
-// emitter that pushes synthetic clickstream events into Event Hubs.
+// emitter that pushes synthetic clickstream events to a Fabric Eventstream
+// CustomEndpoint (Event Hubs wire protocol; no Azure Event Hubs namespace).
 //
 // Why Flex Consumption (vs. classic Linux Consumption Y1):
 //   - Native identity-based AzureWebJobsStorage + identity-based deployment.

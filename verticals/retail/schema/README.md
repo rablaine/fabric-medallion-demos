@@ -7,36 +7,43 @@ Fictional consumer electronics retailer. Sells laptops, phones, TVs, gaming, sma
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                       Source Systems                          │
-├──────────────────────┬──────────────────┬────────────────────┤
-│  Azure SQL           │   Cosmos DB      │   Event Hub        │
-│  (OLTP - canonical)  │  (operational)   │   (streaming)      │
-│                      │                   │                    │
-│  • customers         │  • cart_sessions  │  • clickstream     │
-│  • products          │  • wishlists      │                    │
-│  • orders            │                   │                    │
-│  • inventory         │                   │                    │
-│  • payments          │                   │                    │
-│  • shipments         │                   │                    │
-│  • returns           │                   │                    │
-│  • reviews           │                   │                    │
-└──────────────────────┴──────────────────┴────────────────────┘
+├──────────────────────────────┬───────────────────────────────┤
+│  Azure SQL                   │   Azure Function emitter      │
+│  (OLTP - canonical)          │   (synthetic clickstream)     │
+│                              │                               │
+│  • customers                 │   →  Fabric Eventstream       │
+│  • products                  │      CustomEndpoint           │
+│  • orders                    │      → Eventhouse / KQL DB    │
+│  • inventory                 │        (Clickstream table)    │
+│  • payments                  │                               │
+│  • shipments                 │                               │
+│  • returns                   │                               │
+│  • reviews                   │                               │
+└──────────────────────────────┴───────────────────────────────┘
                            │
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                  ADLS Gen2 (Bronze / Raw)                     │
-│  Mirrored SQL/Cosmos + raw clickstream parquet               │
+│              Fabric Lakehouse (Bronze / Raw)                  │
+│  SQL Mirror (Delta) + ADLS raw/ shortcut + KQL Clickstream   │
 └──────────────────────────────────────────────────────────────┘
                            │
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
-│               Fabric Lakehouse (Silver / Gold)                │
-│  Cleaned, conformed, dimensional models for reporting        │
+│             Fabric Lakehouse (Silver Curated)                 │
+│  Conformed dims / curated facts (retail / weather /          │
+│  clickstream / HR / ops)                                     │
 └──────────────────────────────────────────────────────────────┘
                            │
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                    Power BI Dashboards                        │
-│  Executive overview, sales, inventory, customers, ops        │
+│                Fabric Warehouse (Gold star schema)            │
+│  9 dims + 9 facts (DROP+CTAS sprocs)                         │
+└──────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────────┐
+│           Power BI semantic models + reports + agents         │
+│  Retail Sales / HR & Workforce (Direct Lake)                 │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -118,20 +125,9 @@ erDiagram
 
 See [schema.sql](schema.sql) for full DDL.
 
-## Cosmos DB Containers
+## Clickstream (Fabric Eventstream → Eventhouse / KQL)
 
-**`cart_sessions`** - In-progress shopping carts
-- Partition key: `/customer_id`
-- TTL: 7 days
-
-**`wishlists`** - Customer wishlists
-- Partition key: `/customer_id`
-
-See [cosmos-containers.json](cosmos-containers.json) for definitions.
-
-## Event Hub Streams
-
-**`clickstream_events`** - Web/mobile browsing
+**`Clickstream`** (KQL table) - Web/mobile browsing
 ```json
 {
   "event_id": "uuid",
@@ -148,9 +144,9 @@ See [cosmos-containers.json](cosmos-containers.json) for definitions.
 }
 ```
 
-See [event-schemas/](event-schemas/) for full event JSON schemas.
+The Azure Function emitter writes events to the Eventstream CustomEndpoint (Event Hubs wire protocol); the Eventstream DirectIngests them into the `Clickstream` KQL table. See [event-schemas/](event-schemas/) for full event JSON schemas.
 
-## Data Sensitivity Classification (for Purview)
+## Data Sensitivity Classification
 
 | Data | Classification |
 |---|---|
@@ -168,5 +164,4 @@ See [event-schemas/](event-schemas/) for full event JSON schemas.
 - **Multi-channel**: online + retail store data shows omnichannel analytics
 - **Rich text (reviews)**: enables NLP/sentiment demos with Azure AI
 - **Time-series (clickstream, inventory)**: streaming analytics demos
-- **Sensitive data mix**: drives Purview classification + data masking stories
 - **Realistic complexity**: returns, promotions, multi-location inventory mirror real retail

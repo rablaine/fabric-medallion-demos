@@ -8,7 +8,7 @@ In one script, you get a complete, working **Contoso Retail** demo environment
 on your Azure subscription:
 
 1. You picked the vertical, resource group, region, and resource prefix in the
-   Contoso Data Estate Builder web app — that's all baked into this zip.
+   Fabric Data Estate Builder web app — that's all baked into this zip.
 2. You'll run `deploy.cmd`. It prompts for your Azure account and subscription
    (`az login`), then deploys everything below in order:
 
@@ -41,11 +41,9 @@ on your Azure subscription:
 - Azure CLI installed and authenticated (`az login`)
 - Contributor role on your subscription
 - Python 3.10+ (for synthetic data generation)
-- PowerShell 7+ (for `deploy.ps1`) **or** Bash 4+ (for `deploy.sh`)
+- PowerShell 7+ (for `deploy.ps1`)
 
 ## Deploy
-
-### Windows / PowerShell
 
 Downloaded files are blocked by Windows ("Mark of the Web"). Unblock first, then run **`deploy.cmd`** (it launches pwsh 7 with the correct stdin handling — `pwsh -File` is broken for interactive scripts):
 
@@ -62,12 +60,6 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```
 
 **Do not** use `pwsh -ExecutionPolicy Bypass -File .\deploy.ps1` from `powershell.exe` 5.1 — Read-Host hangs.
-
-### macOS / Linux / WSL
-```bash
-chmod +x deploy.sh
-./deploy.sh
-```
 
 ## What This Deploys
 
@@ -91,4 +83,4 @@ This package was generated with the following settings (see `deployment.config`)
 - **Location**: `{{ config.location }}`
 - **Resource Prefix**: `{{ config.resource_prefix }}`
 
-To change these, regenerate the package from the Contoso Data Estate Builder web app.
+To change these, regenerate the package from the Fabric Data Estate Builder web app.

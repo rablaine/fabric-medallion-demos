@@ -863,6 +863,229 @@ function New-FabricMirroredAzureSqlDatabase {
 }
 
 # -----------------------------------------------------------------------------
+# VNet Data Gateway + gateway-bound SQL connection + Workspace MPE
+# -----------------------------------------------------------------------------
+# These three together let the mirror + notebook JDBC writes work while the
+# Azure SQL server has publicNetworkAccess=Disabled:
+#   - New-FabricVNetGateway: provisions a VNet Data Gateway in the customer's
+#     delegated subnet. Carries Mirroring + connection-test traffic.
+#   - New-FabricSqlGatewayConnection: ServicePrincipal-auth SQL connection
+#     bound to the gateway. Mirror references this. WorkspaceIdentity is NOT
+#     accepted for VirtualNetworkGateway connections (DMTS_InvalidCredentialTypeError).
+#   - New-FabricWorkspaceManagedPrivateEndpoint: workspace-scoped MPE used by
+#     Spark notebooks for JDBC writes. Independent of the gateway.
+
+function New-FabricVNetGateway {
+    <#
+    .SYNOPSIS
+        Creates a Fabric VNet Data Gateway in the given delegated subnet.
+        Idempotent on $DisplayName.
+    .NOTES
+        POST /v1/gateways occasionally hangs the HTTP client even though the
+        server-side create completes. We POST, then GET-loop on /v1/gateways
+        until the named gateway appears or we time out.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$DisplayName,
+        [Parameter(Mandatory)] [string]$CapacityId,
+        [Parameter(Mandatory)] [string]$SubscriptionId,
+        [Parameter(Mandatory)] [string]$ResourceGroupName,
+        [Parameter(Mandatory)] [string]$VirtualNetworkName,
+        [Parameter(Mandatory)] [string]$SubnetName,
+        [int]$InactivityMinutesBeforeSleep = 30,
+        [int]$NumberOfMemberGateways = 1
+    )
+
+    $existing = (Invoke-FabricRest -Token $Token -Method GET -Path '/gateways').Body.value |
+        Where-Object { $_.type -eq 'VirtualNetwork' -and $_.displayName -eq $DisplayName } |
+        Select-Object -First 1
+    if ($existing) { return $existing }
+
+    $body = @{
+        type                         = 'VirtualNetwork'
+        displayName                  = $DisplayName
+        capacityId                   = $CapacityId
+        inactivityMinutesBeforeSleep = $InactivityMinutesBeforeSleep
+        numberOfMemberGateways       = $NumberOfMemberGateways
+        virtualNetworkAzureResource  = @{
+            subscriptionId    = $SubscriptionId
+            resourceGroupName = $ResourceGroupName
+            virtualNetworkName = $VirtualNetworkName
+            subnetName        = $SubnetName
+        }
+    }
+    # Fire the POST but don't trust the response -- Invoke-RestMethod can hang
+    # even when the server-side create succeeds. POST in a try, then GET-loop
+    # to confirm.
+    try {
+        Invoke-FabricRest -Token $Token -Method POST -Path '/gateways' -Body $body | Out-Null
+    } catch {
+        $errMsg = "$_"
+        if ($errMsg -notmatch '409|Conflict|already') { Write-Verbose "Gateway POST returned: $errMsg" }
+    }
+    $deadline = (Get-Date).AddMinutes(5)
+    while ((Get-Date) -lt $deadline) {
+        $list = (Invoke-FabricRest -Token $Token -Method GET -Path '/gateways').Body.value
+        $found = $list | Where-Object { $_.type -eq 'VirtualNetwork' -and $_.displayName -eq $DisplayName } | Select-Object -First 1
+        if ($found) { return $found }
+        Start-Sleep -Seconds 10
+    }
+    throw "VNet gateway '$DisplayName' did not appear within 5 minutes after POST."
+}
+
+function New-FabricSqlGatewayConnection {
+    <#
+    .SYNOPSIS
+        Creates a Fabric SQL connection bound to a VNet Data Gateway,
+        authenticating as a Service Principal. The returned connection id is
+        used as source.typeProperties.connection on a Mirrored Database that
+        targets a SQL server with publicNetworkAccess=Disabled.
+    .NOTES
+        VirtualNetworkGateway connections REJECT credentialType=WorkspaceIdentity
+        (DMTS_InvalidCredentialTypeError). Service Principal is required; the
+        SP must already exist as a SQL user with appropriate rights on the
+        target database.
+        skipTestConnection=false: Fabric attempts a live SQL login through the
+        gateway during create. If the SP grant or PE+DNS isn't in place, this
+        call fails with a descriptive error rather than the connection
+        appearing healthy and then failing at mirror create time.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$DisplayName,
+        [Parameter(Mandatory)] [string]$GatewayId,
+        [Parameter(Mandatory)] [string]$SqlServerFqdn,
+        [Parameter(Mandatory)] [string]$DatabaseName,
+        [Parameter(Mandatory)] [string]$TenantId,
+        [Parameter(Mandatory)] [string]$ServicePrincipalAppId,
+        [Parameter(Mandatory)] [string]$ServicePrincipalSecret
+    )
+
+    $list = (Invoke-FabricRest -Token $Token -Method GET -Path '/connections').Body
+    $existing = $list.value | Where-Object { $_.displayName -eq $DisplayName } | Select-Object -First 1
+    if ($existing) { return $existing }
+
+    $body = @{
+        connectivityType  = 'VirtualNetworkGateway'
+        gatewayId         = $GatewayId
+        displayName       = $DisplayName
+        connectionDetails = @{
+            type           = 'SQL'
+            creationMethod = 'SQL'
+            parameters     = @(
+                @{ dataType = 'Text'; name = 'server';   value = $SqlServerFqdn }
+                @{ dataType = 'Text'; name = 'database'; value = $DatabaseName }
+            )
+        }
+        privacyLevel      = 'Organizational'
+        credentialDetails = @{
+            singleSignOnType     = 'None'
+            connectionEncryption = 'Encrypted'
+            skipTestConnection   = $false
+            credentials          = @{
+                credentialType            = 'ServicePrincipal'
+                tenantId                  = $TenantId
+                servicePrincipalClientId  = $ServicePrincipalAppId
+                servicePrincipalSecret    = $ServicePrincipalSecret
+            }
+        }
+    }
+    $r = Invoke-FabricRest -Token $Token -Method POST -Path '/connections' -Body $body
+    if ($r.Status -eq 202 -and $r.OperationLocation) {
+        Wait-FabricOperation -Token $Token -OperationLocation $r.OperationLocation -Label "create gateway connection $DisplayName" | Out-Null
+        $list = (Invoke-FabricRest -Token $Token -Method GET -Path '/connections').Body
+        return $list.value | Where-Object { $_.displayName -eq $DisplayName } | Select-Object -First 1
+    }
+    return $r.Body
+}
+
+function New-FabricWorkspaceManagedPrivateEndpoint {
+    <#
+    .SYNOPSIS
+        Creates a workspace-scoped Managed Private Endpoint to an Azure
+        resource, approves the resulting Pending PE on the target resource,
+        and waits for the MPE to reach provisioningState=Succeeded.
+    .DESCRIPTION
+        Used so Spark notebooks running in the workspace can reach a target
+        resource (e.g. Azure SQL) over a private network path while the
+        target's publicNetworkAccess is Disabled. The MPE is a separate
+        transport from the VNet Data Gateway -- gateway carries Mirroring +
+        connection-test traffic, MPE carries Spark notebook traffic.
+        Idempotent on $Name.
+    .PARAMETER TargetResourceId
+        Full ARM resource id of the target (e.g. SQL server, storage account).
+    .PARAMETER TargetSubresourceType
+        Sub-resource type per private link (e.g. 'sqlServer', 'dfs', 'blob').
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Token,
+        [Parameter(Mandatory)] [string]$WorkspaceId,
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$TargetResourceId,
+        [Parameter(Mandatory)] [string]$TargetSubresourceType,
+        [string]$RequestMessage = 'Approved automatically by deploy.ps1'
+    )
+
+    $existing = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/managedPrivateEndpoints").Body.value |
+        Where-Object { $_.name -eq $Name } | Select-Object -First 1
+    if (-not $existing) {
+        $body = @{
+            name                        = $Name
+            targetPrivateLinkResourceId = $TargetResourceId
+            targetSubresourceType       = $TargetSubresourceType
+            requestMessage              = $RequestMessage
+        }
+        $r = Invoke-FabricRest -Token $Token -Method POST -Path "/workspaces/$WorkspaceId/managedPrivateEndpoints" -Body $body
+        $existing = $r.Body
+        if (-not $existing -or -not $existing.id) {
+            # POST returned without an id (e.g. 202); list to find it
+            Start-Sleep -Seconds 5
+            $existing = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/managedPrivateEndpoints").Body.value |
+                Where-Object { $_.name -eq $Name } | Select-Object -First 1
+        }
+    }
+    if (-not $existing) { throw "Failed to create or find MPE '$Name' in workspace $WorkspaceId" }
+
+    # Approve the Pending PE that landed on the target resource. The MPE name
+    # on the target is "{workspaceId}.{mpeName}-{guid}". We approve any
+    # Pending PE matching the workspaceId+mpeName prefix.
+    $approveDeadline = (Get-Date).AddMinutes(5)
+    while ((Get-Date) -lt $approveDeadline) {
+        $peListJson = az network private-endpoint-connection list --id $TargetResourceId -o json 2>$null
+        if ($LASTEXITCODE -eq 0 -and $peListJson) {
+            $peList = $peListJson | ConvertFrom-Json
+            $pending = $peList | Where-Object {
+                $_.properties.privateLinkServiceConnectionState.status -eq 'Pending' -and
+                $_.name -like "$WorkspaceId.$Name-*"
+            } | Select-Object -First 1
+            if ($pending) {
+                az network private-endpoint-connection approve --id $pending.id --description $RequestMessage --output none 2>$null
+                break
+            }
+        }
+        Start-Sleep -Seconds 10
+    }
+
+    # Wait for MPE provisioningState=Succeeded (usually 2-4 minutes total).
+    $readyDeadline = (Get-Date).AddMinutes(10)
+    while ((Get-Date) -lt $readyDeadline) {
+        $m = (Invoke-FabricRest -Token $Token -Method GET -Path "/workspaces/$WorkspaceId/managedPrivateEndpoints/$($existing.id)").Body
+        if ($m.provisioningState -eq 'Succeeded' -and $m.connectionState.status -eq 'Approved') {
+            return $m
+        }
+        if ($m.provisioningState -eq 'Failed') {
+            throw "MPE '$Name' provisioning failed: $($m | ConvertTo-Json -Depth 6)"
+        }
+        Start-Sleep -Seconds 15
+    }
+    throw "MPE '$Name' did not reach Succeeded/Approved within 10 minutes."
+}
+
+# -----------------------------------------------------------------------------
 # OneLake Shortcut (ADLS Gen2 -> bronze lakehouse Files area)
 # -----------------------------------------------------------------------------
 
