@@ -9,7 +9,18 @@
 # Reference: https://learn.microsoft.com/rest/api/fabric/
 # =============================================================================
 
-$script:FabricApiBase = 'https://api.fabric.microsoft.com/v1'
+$script:FabricApiBase  = 'https://api.fabric.microsoft.com/v1'
+$script:FabricTenantId = ''
+$script:FabricToken    = ''
+
+function Set-FabricTenant {
+    # Register tenant id so Invoke-FabricRest can run 'az login --tenant <X>'
+    # mid-deploy if the access token AND refresh token both die (CAE challenge,
+    # MFA timeout, etc.). Without this we'd have to abort and restart deploy.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$TenantId)
+    $script:FabricTenantId = $TenantId
+}
 
 function Get-FabricToken {
     <#
@@ -20,7 +31,40 @@ function Get-FabricToken {
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) {
         throw "Failed to obtain Fabric API access token. Are you logged in (az login)?"
     }
-    return ($json | ConvertFrom-Json).accessToken
+    $tok = ($json | ConvertFrom-Json).accessToken
+    $script:FabricToken = $tok
+    return $tok
+}
+
+function Get-FreshFabricToken {
+    # Re-acquire Fabric token after a 401. First try silent refresh via az CLI's
+    # cached refresh token (covers the common case: 1hr access token expired
+    # mid-deploy but refresh token is still alive). If silent refresh fails
+    # too (refresh token revoked / CAE / etc.) drop into interactive
+    # 'az login --tenant <X>' in the same console so the user keeps moving
+    # instead of restarting a multi-hour deploy.
+    $json = az account get-access-token --resource 'https://api.fabric.microsoft.com' --output json 2>$null
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($json)) {
+        $tok = ($json | ConvertFrom-Json).accessToken
+        $script:FabricToken = $tok
+        return $tok
+    }
+    if (-not $script:FabricTenantId) {
+        throw "Fabric access token expired and silent refresh failed; tenant ID not registered (caller must run Set-FabricTenant). Restart deploy after 'az login --tenant <tenant>'."
+    }
+    Write-Host ''
+    Write-Host "    [!] Fabric access token expired and silent refresh failed." -ForegroundColor Yellow
+    Write-Host "    Launching 'az login --tenant $script:FabricTenantId' so deploy can resume without a restart..." -ForegroundColor Yellow
+    az login --tenant $script:FabricTenantId | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "az login failed; cannot continue deploy." }
+    $json = az account get-access-token --resource 'https://api.fabric.microsoft.com' --output json 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) {
+        throw "Could not acquire Fabric access token even after re-login."
+    }
+    $tok = ($json | ConvertFrom-Json).accessToken
+    $script:FabricToken = $tok
+    Write-Host "    [OK] Re-authenticated; resuming deploy." -ForegroundColor Green
+    return $tok
 }
 
 function Invoke-FabricRest {
@@ -65,7 +109,9 @@ function Invoke-FabricRest {
     # front door is under load -- these are safe to retry. 4xx (other than 429)
     # is not retried. 429s honor Retry-After or the "blocked by upstream service
     # until: <UTC timestamp>" message, which can be many minutes out.
-    $maxAttempts = 8
+    $maxAttempts          = 8
+    $maxTokenRefreshes    = 2
+    $tokenRefreshes       = 0
     $resp = $null
     $errMsg = $null
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
@@ -79,9 +125,24 @@ function Invoke-FabricRest {
             if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
                 $errMsg += "`nResponse: $($_.ErrorDetails.Message)"
             }
+            # 401 / TokenExpired: refresh the bearer token transparently. Common
+            # when a long-running deploy crosses the ~1hr access-token TTL
+            # boundary. Silent refresh first (cached refresh token); interactive
+            # az login if that fails too. Bounded so a permanently-broken auth
+            # still surfaces eventually.
+            $isTokenExpired = ($respStatus -eq 401) -or ($errMsg -match 'TokenExpired|Access token has expired|401 \(Unauthorized\)')
+            if ($isTokenExpired -and $tokenRefreshes -lt $maxTokenRefreshes) {
+                $tokenRefreshes++
+                Write-Host "  Fabric API $Method ${Path}: access token expired (refresh $tokenRefreshes/$maxTokenRefreshes); re-acquiring..." -ForegroundColor DarkYellow
+                $newTok = Get-FreshFabricToken
+                $headers.Authorization = "Bearer $newTok"
+                $Token = $newTok
+                $attempt--  # don't burn a transient-retry slot on a token refresh
+                continue
+            }
             $isTransient = $false
             if ($respStatus -in 429, 500, 502, 503, 504) { $isTransient = $true }
-            if ($errMsg -match 'unexpected EOF|SSL connection could not be established|actively refused|operation has timed out|underlying connection was closed|0 bytes from the transport stream') {
+            if ($errMsg -match 'unexpected EOF|SSL connection could not be established|actively refused|operation has timed out|underlying connection was closed|0 bytes from the transport stream|forcibly closed by the remote host|Unable to read data from the transport connection|error occurred while sending the request|connection was aborted|name or service not known|name resolution|could not be resolved|temporary failure in name resolution|EOF occurred|server certificate.*could not be|target machine actively refused|unable to connect to the remote server') {
                 $isTransient = $true
             }
             if (-not $isTransient -or $attempt -eq $maxAttempts) {

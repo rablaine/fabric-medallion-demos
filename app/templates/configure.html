@@ -36,9 +36,15 @@
         </label>
 
         <label class="checkbox-label">
-            <input type="checkbox" name="auto_run_initial_load" value="true" checked>
+            <input type="checkbox" name="auto_run_initial_load" id="auto_run_initial_load_cb" value="true" checked>
             <span>Automatically run the initial medallion load after deploy finishes</span>
             <small>Triggers <code>pl_initial_load</code> (which chains bronze + silver + gold) so the warehouse is populated end-to-end before the script exits. Uncheck to stop after infrastructure deploy and trigger it manually from Fabric later.</small>
+        </label>
+
+        <label class="checkbox-label">
+            <input type="checkbox" name="deploy_purview" id="deploy_purview_cb" value="true">
+            <span>Deploy Purview governance layer (catalog, domains, glossary, data products, OKRs, CDEs)</span>
+            <small>Requires an existing Purview account in the same subscription (upgraded to the new experience). Builds a per-deploy collection, scans SQL + ADLS + Fabric, defines two governance domains, glossary terms, data products, OKRs, access policies, and critical data elements. Forces auto-run of <code>pl_initial_load</code> &mdash; the Fabric scan needs populated lakehouses. Adds ~15&ndash;25 min after the medallion load finishes.</small>
         </label>
 
         <div class="form-actions">
@@ -272,6 +278,21 @@
             e.preventDefault();
             closeWalkthrough();
         });
+
+        // Purview Fabric scan needs populated lakehouses, so force auto-run
+        // of the initial medallion load whenever the Purview box is checked.
+        const purviewCb  = document.getElementById('deploy_purview_cb');
+        const autoRunCb  = document.getElementById('auto_run_initial_load_cb');
+        function syncAutoRunFromPurview() {
+            if (purviewCb.checked) {
+                autoRunCb.checked  = true;
+                autoRunCb.disabled = true;
+            } else {
+                autoRunCb.disabled = false;
+            }
+        }
+        purviewCb.addEventListener('change', syncAutoRunFromPurview);
+        syncAutoRunFromPurview();
     </script>
 </section>
 {% endblock %}
