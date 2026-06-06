@@ -114,9 +114,13 @@ function Get-WsItemId {
     return $hit.id
 }
 
-# Item names this recipe creates (kept in sync with deploy.ps1 / Fabric.ps1)
-$bronzeLakehouseId   = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'bronze' -ItemDisplayName 'contoso_retail_bronze'        -ItemTypes 'Lakehouse'
-$silverCuratedLhId   = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'silver' -ItemDisplayName 'contoso_retail_silver_curated' -ItemTypes 'Lakehouse'
+# Item names this recipe creates (kept in sync with deploy.ps1 / Fabric.ps1).
+# For Fabric Lakehouses the Purview Fabric scan registers the asset under the
+# SQLEndpoint item GUID, NOT the Lakehouse item GUID, even though the QN looks
+# like .../lakewarehouses/<guid>. So we resolve the SQLEndpoint sibling that
+# Fabric auto-creates alongside each lakehouse.
+$bronzeLakehouseId   = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'bronze' -ItemDisplayName 'contoso_retail_bronze'        -ItemTypes 'SQLEndpoint'
+$silverCuratedLhId   = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'silver' -ItemDisplayName 'contoso_retail_silver_curated' -ItemTypes 'SQLEndpoint'
 $goldWarehouseId     = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'gold'   -ItemDisplayName 'contoso_retail_gold'           -ItemTypes 'Warehouse'
 $kqlDbId             = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'bronze' -ItemDisplayName 'contoso_retail_events'         -ItemTypes 'KQLDatabase'
 $retailSemModelId    = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'gold'   -ItemDisplayName 'Retail Sales'                  -ItemTypes 'SemanticModel'

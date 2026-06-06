@@ -170,6 +170,12 @@ function Get-DataMapColumns([string]$assetGuid) {
 }
 
 # Resolve @{Asset; Column} -> @{ dmAssetId; dmColumnId; catalogAssetId(or $null) }
+# Lookup priority:
+#  1. Onboarded catalog DataAssets (have both dmId and catalogId)
+#  2. PowerBI dataset child tables (dmId only)
+#  3. Datamap search by exact name -- covers SQL/ADLS tables that aren't
+#     linked to any data product (e.g. 'customers'). dmId only.
+$script:datamapAssetByName = @{}
 function Resolve-ColumnRef($ref) {
     $assetKey = $ref.Asset.ToLower()
     $dmAssetId = $null
@@ -179,9 +185,18 @@ function Resolve-ColumnRef($ref) {
         $catalogAssetId = $script:catalogAssetByName[$assetKey].catId
     } elseif ($script:datasetTableByName.ContainsKey($assetKey)) {
         $dmAssetId = $script:datasetTableByName[$assetKey]
+    } elseif ($script:datamapAssetByName.ContainsKey($assetKey)) {
+        $dmAssetId = $script:datamapAssetByName[$assetKey]
     } else {
-        Write-Warning "  asset '$($ref.Asset)' not found in catalog or any powerbi dataset"
-        return $null
+        $searchBody = @{ keywords = $ref.Asset; limit = 25 } | ConvertTo-Json -Depth 4
+        $hits = (Invoke-RestWithRetry -Method POST -Uri "$endpoint/datamap/api/search/query?api-version=2023-09-01" -Headers $h -Body $searchBody).value
+        $hit = $hits | Where-Object { $_.name -eq $ref.Asset } | Select-Object -First 1
+        if (-not $hit) {
+            Write-Warning "  asset '$($ref.Asset)' not found in catalog, powerbi datasets, or datamap"
+            return $null
+        }
+        $dmAssetId = $hit.id
+        $script:datamapAssetByName[$assetKey] = $dmAssetId
     }
     $cols = Get-DataMapColumns $dmAssetId
     if (-not $cols.ContainsKey($ref.Column)) {
