@@ -18,10 +18,16 @@
 
 .EXAMPLE
     .\deploy.ps1
+
+.EXAMPLE
+    .\deploy.ps1 -StartOver
+    Ignores any prior crashed-deploy state file and starts fresh.
 #>
 
 [CmdletBinding()]
-param()
+param(
+    [switch]$StartOver  # ignore any prior crashed-deploy state file
+)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
@@ -62,6 +68,104 @@ function Complete-Log {
 }
 
 # -----------------------------------------------------------------------------
+# Deploy state file -- crash detection + reattach context.
+#
+# Written after every Write-Step + at terminal states (completed/failed).
+# Lives in $PSScriptRoot\logs\.deploy-state.json so it survives across
+# re-runs from the same package but doesn't pollute LOCALAPPDATA.
+#
+# We do NOT do automatic per-step resume -- the script has hundreds of
+# locals ($outputs, $workspaces, $fabricToken, etc.) that would all need
+# rehydration from Azure/Fabric. Instead, on next run we DETECT the prior
+# crash, show the user where we died and how long ago, and let them choose
+# to continue (relying on the RG-exists / workspace-exists branches that
+# already make most steps idempotent) or to teardown first.
+#
+# Use -StartOver to skip the prompt and overwrite the prior state.
+# -----------------------------------------------------------------------------
+$script:StateFile     = Join-Path $logDir '.deploy-state.json'
+$script:DeployId      = [guid]::NewGuid().ToString('N').Substring(0,8)
+$script:CurrentStepNo = 0
+$script:CurrentStep   = ''
+$script:DeployStartedAt = (Get-Date).ToString('o')
+
+function Save-DeployState {
+    param(
+        [ValidateSet('running','completed','failed')][string]$Status = 'running',
+        [string]$FailureReason = ''
+    )
+    try {
+        $obj = [pscustomobject]@{
+            deploy_id        = $script:DeployId
+            started_at       = $script:DeployStartedAt
+            updated_at       = (Get-Date).ToString('o')
+            status           = $Status
+            current_step_no  = $script:CurrentStepNo
+            current_step     = $script:CurrentStep
+            failure_reason   = $FailureReason
+            log_path         = $logPath
+            resource_group   = if ($config) { $config.RESOURCE_GROUP } else { '' }
+            subscription_id  = if ($selectedSub) { $selectedSub.id } else { '' }
+            tenant_id        = if ($selectedSub) { $selectedSub.tenantId } else { '' }
+        }
+        $obj | ConvertTo-Json | Set-Content -Path $script:StateFile -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        # state file is advisory; never fail the deploy because we couldn't write it
+    }
+}
+
+# trap fires on any uncaught throw. Without it the script exits before
+# Stop-Transcript runs and the log copy never happens, so the user loses
+# the post-crash log when they delete the package folder. Save-DeployState
+# records the crash so the next run shows where we died.
+trap { Save-DeployState -Status 'failed' -FailureReason $_.Exception.Message; Complete-Log; break }
+
+# -----------------------------------------------------------------------------
+# Prior-deploy state detection.
+#
+# If a prior deploy from this package crashed (or is still running in another
+# console) the state file from $logDir tells us where. Show context so the
+# user isn't blindly re-running into a half-built RG. Use -StartOver to skip.
+#
+# Must run BEFORE the first Save-DeployState call (Write-Step writes state),
+# otherwise we read back the row we just wrote and warn about ourselves.
+# -----------------------------------------------------------------------------
+if ((Test-Path $script:StateFile) -and -not $StartOver) {
+    try {
+        $prior = Get-Content -Raw -Path $script:StateFile | ConvertFrom-Json
+        $age = New-TimeSpan -Start ([datetime]::Parse($prior.updated_at)) -End (Get-Date)
+        $ageStr = if ($age.TotalHours -ge 1) { "{0:N1}h ago" -f $age.TotalHours } else { "{0:N0}m ago" -f $age.TotalMinutes }
+        Write-Host ''
+        switch ($prior.status) {
+            'completed' {
+                Write-Host "Prior deploy from this package COMPLETED $ageStr (id=$($prior.deploy_id), RG=$($prior.resource_group))." -ForegroundColor Yellow
+                Write-Host "Re-running will attempt to add to / refresh the existing deployment." -ForegroundColor Yellow
+            }
+            'failed' {
+                Write-Host "Prior deploy from this package FAILED $ageStr at step $($prior.current_step_no):" -ForegroundColor Red
+                Write-Host "    `"$($prior.current_step)`"" -ForegroundColor Red
+                if ($prior.failure_reason) { Write-Host "    reason: $($prior.failure_reason)" -ForegroundColor DarkRed }
+                Write-Host "    log:    $($prior.log_path)" -ForegroundColor DarkGray
+                Write-Host "    RG:     $($prior.resource_group) (will be reattached if it still exists)" -ForegroundColor DarkGray
+            }
+            default {
+                Write-Host "Prior deploy state shows STATUS=$($prior.status), last update $ageStr at step $($prior.current_step_no): `"$($prior.current_step)`"" -ForegroundColor Yellow
+                Write-Host "Either another deploy is still running, or the prior run was killed (Ctrl-C / window closed)." -ForegroundColor Yellow
+            }
+        }
+        Write-Host ''
+        $ans = Read-Host "Continue? Re-run will re-detect existing resources where possible. [y/N]"
+        if ($ans -notmatch '^(y|yes)$') {
+            Write-Host "Aborted. Re-run with -StartOver to bypass this prompt, or run teardown.cmd to wipe the prior RG first." -ForegroundColor Yellow
+            Complete-Log
+            exit 0
+        }
+    } catch {
+        Write-Host "    (could not parse prior state file: $_)" -ForegroundColor DarkGray
+    }
+}
+
+# -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
 # Section timing: Write-Step prints elapsed time for the PREVIOUS step before
@@ -78,6 +182,9 @@ function Write-Step($msg) {
     Write-Host "==> $msg" -ForegroundColor Cyan
     $script:__stepStart = Get-Date
     $script:__stepLabel = $msg
+    $script:CurrentStepNo++
+    $script:CurrentStep = $msg
+    Save-DeployState -Status 'running'
 }
 function Write-Done {
     param([switch]$NoTotal)
@@ -94,6 +201,90 @@ function Write-Done {
 function Write-Info($msg)    { Write-Host "    $msg" -ForegroundColor Gray }
 function Write-Ok($msg)      { Write-Host "    [OK] $msg" -ForegroundColor Green }
 function Write-Warn2($m)     { Write-Host "    [WARN] $m" -ForegroundColor Yellow }
+
+# Tenant captured at sign-in; used by Invoke-AzWithRetry to run 'az login
+# --tenant <X>' if silent refresh fails. Populated below after 'az login'.
+$script:DeployTenantId = ''
+
+# -----------------------------------------------------------------------------
+# Invoke-AzWithRetry -- transparent retry wrapper for 'az' calls.
+#
+# Why: 'az' caches tokens but a long deploy (Bicep ~5min + Fabric ~30min +
+# Purview ~20min) routinely crosses the 1hr access-token TTL. Continuous
+# Access Evaluation (CAE) can also revoke tokens mid-deploy. Both surface
+# as exit code 1 with stderr like "AADSTS70043 / TokenExpired / please run
+# 'az login'". Without a wrapper, every late-deploy 'az' call is a coin
+# flip and a crash means full teardown + restart.
+#
+# Behavior:
+#   - run the scriptblock, capture stderr + LASTEXITCODE
+#   - exit 0       -> return stdout
+#   - token error  -> silent 'az account get-access-token' (cached refresh
+#                     token), then interactive 'az login --tenant <X>' if
+#                     that also fails. Re-runs the call. Capped at 2 token
+#                     refreshes per call.
+#   - 429/5xx/transport -> exp backoff (cap 30s), capped at 6 attempts.
+#   - other       -> throw with stderr.
+#
+# Usage:
+#   $sub = Invoke-AzWithRetry -Label 'az account show' { az account show -o json } | ConvertFrom-Json
+#   Invoke-AzWithRetry -Label 'rg create' { az group create -n $rg -l $loc --output none } | Out-Null
+#
+# AllowNonZeroExit: pass when the caller treats non-zero as "not found" /
+# "no rows" (e.g. 'az purview account list' against a sub with no perms).
+# -----------------------------------------------------------------------------
+function Invoke-AzWithRetry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][scriptblock]$Script,
+        [string]$Label = 'az call',
+        [int]$MaxAttempts = 6,
+        [switch]$AllowNonZeroExit
+    )
+    $maxTokenRefreshes = 2
+    $tokenRefreshes    = 0
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $errFile = [System.IO.Path]::GetTempFileName()
+        try {
+            $result = & $Script 2>$errFile
+            $exit   = $LASTEXITCODE
+            $stderr = (Get-Content -Raw -Path $errFile -ErrorAction SilentlyContinue) ?? ''
+            if ($exit -eq 0) { return $result }
+            if ($AllowNonZeroExit -and $exit -ne 0 -and -not ($stderr -match 'AADSTS|TokenExpired|please run.*az login|InvalidAuthenticationToken|429|5\d\d ')) {
+                return $result
+            }
+            $isTokenExpired = $stderr -match 'AADSTS70043|AADSTS50173|AADSTS500011|AADSTS50076|AADSTS50079|TokenExpired|Access token has expired|InvalidAuthenticationToken|expired or revoked|Continuous Access Evaluation|please run.*az login|Please run.*az login|run.*az login.*again'
+            if ($isTokenExpired -and $tokenRefreshes -lt $maxTokenRefreshes) {
+                $tokenRefreshes++
+                Write-Host "    [auth] ${Label}: token rejected (refresh $tokenRefreshes/$maxTokenRefreshes); re-acquiring..." -ForegroundColor DarkYellow
+                az account get-access-token --resource https://management.azure.com --output none 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    if (-not $script:DeployTenantId) {
+                        throw "${Label}: token expired, silent refresh failed, and tenant id not registered. Restart deploy after 'az login'."
+                    }
+                    Write-Host "    [auth] Silent refresh failed; launching 'az login --tenant $script:DeployTenantId'..." -ForegroundColor Yellow
+                    az login --tenant $script:DeployTenantId | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "${Label}: az login failed (cannot recover)." }
+                    Write-Host "    [auth] Re-authenticated; resuming." -ForegroundColor Green
+                }
+                continue
+            }
+            $isTransient = $stderr -match 'TooManyRequests|\b429\b|throttl|\b500\b|\b502\b|\b503\b|\b504\b|temporary|service unavailable|timeout|timed out|connection.*reset|connection.*aborted|name or service|name resolution|EOF|TLS|SSL'
+            if ($isTransient -and $attempt -lt $MaxAttempts) {
+                $delay = [int][Math]::Min(30, [Math]::Pow(2, $attempt))
+                Write-Host "    [retry] ${Label}: transient error (attempt $attempt/$MaxAttempts); retrying in ${delay}s" -ForegroundColor DarkYellow
+                if ($stderr) { Write-Host "      $($stderr.Trim() -replace "`r?`n",' | ')" -ForegroundColor DarkGray }
+                Start-Sleep -Seconds $delay
+                continue
+            }
+            throw "${Label} failed (exit $exit): $($stderr.Trim())"
+        }
+        finally {
+            Remove-Item -LiteralPath $errFile -ErrorAction SilentlyContinue
+        }
+    }
+    throw "${Label} failed after $MaxAttempts attempts"
+}
 
 # -----------------------------------------------------------------------------
 # Teardown emitter. Called twice during deploy:
@@ -741,6 +932,11 @@ if (-not $graphOk) {
 $selectedSub = az account show --output json | ConvertFrom-Json
 if (-not $selectedSub) { throw "Could not read active subscription after az login" }
 
+# Register tenant id so Invoke-AzWithRetry can re-auth autonomously if a 401
+# / CAE challenge / TokenExpired hits later in the deploy. Without this it'd
+# crash mid-deploy and force the user to teardown + restart.
+$script:DeployTenantId = $selectedSub.tenantId
+
 Write-Ok "Using account:      $($selectedSub.user.name)"
 Write-Ok "Using subscription: $($selectedSub.name)"
 Write-Info "Subscription ID: $($selectedSub.id)"
@@ -1198,8 +1394,8 @@ Write-Ok "  bronze lakehouse id=$($bronzeLh.id)"
 # the seed run. Fire as ThreadJob -- the submit takes ~18s round-trip and
 # nothing between here and ADLS shortcut create needs the role.
 Write-Step "Granting workspace identity 'Storage Blob Data Reader' on storage account (background)"
-$storageId = az storage account show --name $outputs.storageAccount.value --resource-group $config.RESOURCE_GROUP --query id -o tsv
-if ($LASTEXITCODE -ne 0 -or -not $storageId) { throw "Failed to resolve storage account resource id" }
+$storageId = Invoke-AzWithRetry -Label 'az storage account show' { az storage account show --name $outputs.storageAccount.value --resource-group $config.RESOURCE_GROUP --query id -o tsv }
+if (-not $storageId) { throw "Failed to resolve storage account resource id" }
 $blobReaderJob = Start-ThreadJob -Name 'storage-blob-reader-grant' -ScriptBlock {
     param($spId, $scope)
     az role assignment create `
@@ -1256,8 +1452,8 @@ $wsOid  = $wsIdentity.servicePrincipalId
 # single Invoke-Sqlcmd grants both principals in one trip.
 Write-Step "Creating service principal for Fabric gateway connection"
 $spName = "sp-fabric-mirror-$($outputs.uniqueSuffix.value)"
-$spJson = az ad sp create-for-rbac --display-name $spName --years 1 --role Reader --scopes "/subscriptions/$($selectedSub.id)" -o json 2>$null
-if ($LASTEXITCODE -ne 0 -or -not $spJson) { throw "az ad sp create-for-rbac failed for $spName" }
+$spJson = Invoke-AzWithRetry -Label 'az ad sp create-for-rbac' { az ad sp create-for-rbac --display-name $spName --years 1 --role Reader --scopes "/subscriptions/$($selectedSub.id)" -o json 2>$null }
+if (-not $spJson) { throw "az ad sp create-for-rbac failed for $spName" }
 $sp = $spJson | ConvertFrom-Json
 $spAppId  = $sp.appId
 $spSecret = $sp.password
@@ -1265,7 +1461,7 @@ $spSecret = $sp.password
 $spOid = $null
 $spOidDeadline = (Get-Date).AddSeconds(90)
 while ((Get-Date) -lt $spOidDeadline) {
-    $spOid = az ad sp show --id $spAppId --query id -o tsv 2>$null
+    $spOid = Invoke-AzWithRetry -Label 'az ad sp show' -AllowNonZeroExit { az ad sp show --id $spAppId --query id -o tsv 2>$null }
     if ($spOid) { break }
     Start-Sleep -Seconds 5
 }
@@ -1366,7 +1562,7 @@ Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selected
 # forever, status="Running", no error. Adding the SAMI as a workspace
 # Contributor covers all current and future mirror items in the workspace.
 Write-Step "Granting Azure SQL server SAMI Contributor on bronze workspace (required for mirroring)"
-$sqlSamiPid = az sql server show -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --query identity.principalId -o tsv
+$sqlSamiPid = Invoke-AzWithRetry -Label 'az sql server show (SAMI pid)' { az sql server show -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --query identity.principalId -o tsv }
 if (-not $sqlSamiPid) { throw "Azure SQL server has no system-assigned managed identity" }
 Add-FabricWorkspaceRoleAssignment `
     -Token $fabricToken `
@@ -1389,7 +1585,7 @@ Write-Ok "  granted Contributor to SQL SAMI $sqlSamiPid (propagating during seed
 # before disabling SQL public network access.
 # -----------------------------------------------------------------------------
 Write-Step "Starting workspace Managed Private Endpoint create to SQL (background; ~4 min)"
-$sqlServerResId = az sql server show -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --query id -o tsv
+$sqlServerResId = Invoke-AzWithRetry -Label 'az sql server show (resId)' { az sql server show -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --query id -o tsv }
 $mpeName = "mpe-sql-$($outputs.uniqueSuffix.value)"
 $fabricPs1Path = Join-Path (Join-Path $PSScriptRoot 'scripts') 'Fabric.ps1'
 $mpeJob = Start-ThreadJob -Name 'mpe-create' -ScriptBlock {
@@ -1423,9 +1619,8 @@ if ($mpeState -ne 'Completed' -or -not $mpe) { throw "MPE create job ended in st
 Write-Ok "  MPE $mpeName Approved + Succeeded (id=$($mpe.id))"
 
 Write-Step "Disabling SQL publicNetworkAccess (zero-touch network path from here on)"
-az sql server update -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --set publicNetworkAccess=Disabled --output none
-if ($LASTEXITCODE -ne 0) { throw "Failed to disable publicNetworkAccess on $($outputs.sqlServerName.value)" }
-az sql server firewall-rule delete -g $config.RESOURCE_GROUP -s $outputs.sqlServerName.value -n AllowDeployerClient --yes 2>$null | Out-Null
+Invoke-AzWithRetry -Label 'az sql server update (PNA=Disabled)' { az sql server update -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --set publicNetworkAccess=Disabled --output none } | Out-Null
+Invoke-AzWithRetry -Label 'az sql firewall-rule delete (AllowDeployerClient)' -AllowNonZeroExit { az sql server firewall-rule delete -g $config.RESOURCE_GROUP -s $outputs.sqlServerName.value -n AllowDeployerClient --yes 2>$null } | Out-Null
 Write-Ok "  publicNetworkAccess=Disabled"
 
 # -----------------------------------------------------------------------------
@@ -1688,6 +1883,22 @@ $eventstreamConnStr = Get-FabricEventstreamSourceConnectionString `
     -SourceId $es.sourceId
 Write-Ok "  source conn string retrieved ($($eventstreamConnStr.Length) chars)"
 
+# Wire EVENTHUB_CONNECTION_STRING BEFORE OneDeploy. Setting it after the
+# deploy triggers a host restart that races the post-deploy
+# syncfunctiontriggers call: sync hits the host mid-restart, registers 0
+# functions in the metadata blob, scale controller reads 0, host never
+# cold-starts, timer never fires, Clickstream stays empty. Set up front so
+# the post-deploy sync is the ONLY thing changing host state.
+Write-Step "Wiring EVENTHUB_CONNECTION_STRING into Function app settings (pre-deploy)"
+Invoke-AzWithRetry -Label 'az functionapp config appsettings set' {
+    az functionapp config appsettings set `
+        --name $outputs.functionAppName.value `
+        --resource-group $config.RESOURCE_GROUP `
+        --settings "EVENTHUB_CONNECTION_STRING=$eventstreamConnStr" `
+        --output none
+} | Out-Null
+Write-Ok "  EVENTHUB_CONNECTION_STRING set"
+
 # -----------------------------------------------------------------------------
 # 3-way parallel: seed notebook || backfill notebook || function deploy.
 # SQL DB is at GP_S_Gen5_8 (min 1.0) so seed has burst headroom; scale-down
@@ -1767,19 +1978,24 @@ Write-Step "Kicking off SQL DB scale-down to idle-cheap SKU (GP_S_Gen5_4) -- fir
 # --no-wait: Azure scales the DB asynchronously; the deploy doesn't depend on
 # the new SKU being active to continue (seed already drained the burst headroom
 # we needed at Gen5_8). Saves ~50s of wall-clock.
-az sql db update `
-    --name $outputs.sqlDatabaseName.value `
-    --server $outputs.sqlServerName.value `
-    --resource-group $config.RESOURCE_GROUP `
-    --edition GeneralPurpose `
-    --family Gen5 `
-    --capacity 4 `
-    --min-capacity 0.5 `
-    --compute-model Serverless `
-    --no-wait `
-    --output none
-if ($LASTEXITCODE -ne 0) { Write-Info "  (non-fatal) SQL scale-down submit failed; please scale back manually" }
-else { Write-Ok "  scale-down submitted (will complete in background)" }
+try {
+    Invoke-AzWithRetry -Label 'az sql db update (scale-down)' {
+        az sql db update `
+            --name $outputs.sqlDatabaseName.value `
+            --server $outputs.sqlServerName.value `
+            --resource-group $config.RESOURCE_GROUP `
+            --edition GeneralPurpose `
+            --family Gen5 `
+            --capacity 4 `
+            --min-capacity 0.5 `
+            --compute-model Serverless `
+            --no-wait `
+            --output none
+    } | Out-Null
+    Write-Ok "  scale-down submitted (will complete in background)"
+} catch {
+    Write-Info "  (non-fatal) SQL scale-down submit failed; please scale back manually: $_"
+}
 
 # -----------------------------------------------------------------------------
 # SQL Mirror item + ADLS Shortcut (AFTER seed so initial snapshot is meaningful)
@@ -1870,30 +2086,27 @@ Remove-Item $funcZip -ErrorAction SilentlyContinue
 if ($funcState -ne 'Completed') { throw "Function deploy thread job ended in state '$funcState'" }
 Write-Ok "  function deployed -> https://$($outputs.functionHostname.value)"
 
-# Push the Fabric Eventstream CustomEndpoint SAS conn string into the
-# Function app settings AFTER code deploy, so the runtime restart picks it
-# up cleanly. Setting it before deploy works too but a second restart is
-# wasteful.
-Write-Step "Wiring EVENTHUB_CONNECTION_STRING into Function app settings"
-az functionapp config appsettings set `
-    --name $outputs.functionAppName.value `
-    --resource-group $config.RESOURCE_GROUP `
-    --settings "EVENTHUB_CONNECTION_STRING=$eventstreamConnStr" `
-    --output none
-if ($LASTEXITCODE -ne 0) { throw "Failed to set EVENTHUB_CONNECTION_STRING on $($outputs.functionAppName.value)" }
-Write-Ok "  EVENTHUB_CONNECTION_STRING set (Function will restart and begin emitting)"
-
 # Flex Consumption does NOT auto-discover triggers in a freshly-uploaded
-# package after OneDeploy + restart -- the host scans wwwroot before the new
-# package is mounted and ends up with zero registered functions (timer never
-# fires, Clickstream stays empty). Forcing a syncfunctiontriggers makes the
-# host re-scan against the just-deployed package. Without this the function
-# app silently does nothing until manually kicked.
-Write-Step "Syncing function triggers (Flex Consumption requires explicit sync after OneDeploy)"
+# package: scale controller reads function metadata from a control-plane
+# blob, not the running host. syncfunctiontriggers writes that blob from
+# the deployed package. A single call can race the host (returns 200 but
+# registers 0 functions), so we sync-and-verify in a loop: call sync, poll
+# `functionapp function list` until non-empty, retry up to 5 times.
+# EVENTHUB_CONNECTION_STRING was already set pre-deploy so there's no
+# settings-change restart racing this loop.
+Write-Step "Syncing function triggers (Flex Consumption requires explicit sync + verify after OneDeploy)"
 $syncUri = "https://management.azure.com/subscriptions/$($selectedSub.id)/resourceGroups/$($config.RESOURCE_GROUP)/providers/Microsoft.Web/sites/$($outputs.functionAppName.value)/syncfunctiontriggers?api-version=2022-03-01"
-az rest --method post --uri $syncUri --output none
-if ($LASTEXITCODE -ne 0) { Write-Info "  syncfunctiontriggers returned non-zero (often benign; will retry once)"; Start-Sleep 10; az rest --method post --uri $syncUri --output none }
-Write-Ok "  triggers synced"
+$fnCount = 0
+for ($attempt = 1; $attempt -le 5; $attempt++) {
+    Invoke-AzWithRetry -Label "az rest syncfunctiontriggers (attempt $attempt)" { az rest --method post --uri $syncUri --output none } | Out-Null
+    Start-Sleep -Seconds 15
+    $fnList = az functionapp function list --name $outputs.functionAppName.value --resource-group $config.RESOURCE_GROUP --output json 2>$null | ConvertFrom-Json
+    $fnCount = if ($fnList) { @($fnList).Count } else { 0 }
+    Write-Info "  attempt $attempt -> $fnCount function(s) registered"
+    if ($fnCount -gt 0) { break }
+}
+if ($fnCount -eq 0) { throw "Function triggers never registered after 5 sync attempts -- emitter will not fire" }
+Write-Ok "  $fnCount trigger(s) registered"
 Write-Info "  emitter fires every 30s -> Fabric Eventstream '$($es.sourceName)' -> Eventhouse 'Clickstream' table"
 
 # -----------------------------------------------------------------------------
@@ -2710,6 +2923,7 @@ Write-Host ""
 # Stop the transcript explicitly so the log file handle is released before
 # pwsh exits (otherwise it stays locked briefly and blocks user deletion of
 # the package folder), then copy it out to %LOCALAPPDATA% for retention.
+Save-DeployState -Status 'completed'
 Complete-Log
 
 # Pause so the user sees the success message before the window closes.
