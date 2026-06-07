@@ -270,6 +270,63 @@ if ($ctx.dataSources.adls) {
   Try-Delete "$endpoint/scan/datasources/$($ctx.dataSources.adls)?api-version=2022-02-01-preview" "adls source '$($ctx.dataSources.adls)'"
 }
 
+# --- 6a. Lineage edges created by 19-lineage.ps1.
+# Two artifact classes to clean:
+#   (1) Custom typeName='Process' entities (sql-mirror, clickstream-es,
+#       gold-to-semantic-*). Created by POST /entity without a collectionId so
+#       they live in the root collection. The collection-scoped bulk delete in
+#       6b misses them — delete by uniqueAttribute (qualifiedName).
+#   (2) relationshipAttributes (inputs/outputs) added to existing fabric_pipeline
+#       and fabric_synapse_notebook entities. The Fabric entities live in the
+#       Fabric scan's auto-collection (not ours) so 6b leaves them and their
+#       edges behind. Strip every input/output relationship by relationshipGuid
+#       — the parent Fabric entity itself stays put (Fabric scan owns it).
+Write-Host "=== Lineage Process entities ===" -ForegroundColor Cyan
+if ($ctx.collection.suffix) {
+  $suffix = $ctx.collection.suffix
+  $lineageProcessQns = @(
+    "process://contoso_retail/sql-mirror/$suffix",
+    "process://contoso_retail/clickstream-es/$suffix",
+    "process://contoso_retail/gold-to-semantic/$suffix/retail-sales",
+    "process://contoso_retail/gold-to-semantic/$suffix/hr-workforce"
+  )
+  foreach ($qn in $lineageProcessQns) {
+    $encQn = [System.Uri]::EscapeDataString($qn)
+    Try-Delete "$endpoint/datamap/api/atlas/v2/entity/uniqueAttribute/type/Process?attr:qualifiedName=$encQn" "lineage process '$qn'"
+  }
+}
+
+Write-Host "=== Fabric pipeline/notebook lineage edges ===" -ForegroundColor Cyan
+if ($ctx.retail.workspaces) {
+  $fabKindMap = @{
+    Notebook     = @{ Segment='synapsenotebooks'; Type='fabric_synapse_notebook' }
+    DataPipeline = @{ Segment='pipelines';        Type='fabric_pipeline' }
+  }
+  $relsDeleted = 0
+  foreach ($ws in $ctx.retail.workspaces) {
+    foreach ($it in $ws.items) {
+      $k = $fabKindMap[$it.type]
+      if (-not $k) { continue }
+      $qn = "https://app.fabric.microsoft.com/groups/$($ws.id)/$($k.Segment)/$($it.id)"
+      $encQn = [System.Uri]::EscapeDataString($qn)
+      $entity = $null
+      try {
+        $entity = Invoke-RestWithRetry -Method GET -Uri "$endpoint/datamap/api/atlas/v2/entity/uniqueAttribute/type/$($k.Type)?attr:qualifiedName=$encQn" -Headers $headers -SkipHttpErrorCheck
+      } catch { continue }
+      if (-not $entity.entity) { continue }
+      $rels = @()
+      if ($entity.entity.relationshipAttributes.inputs)  { $rels += $entity.entity.relationshipAttributes.inputs }
+      if ($entity.entity.relationshipAttributes.outputs) { $rels += $entity.entity.relationshipAttributes.outputs }
+      foreach ($r in $rels) {
+        if (-not $r.relationshipGuid) { continue }
+        $resp = Invoke-WebRequest -Method DELETE -Uri "$endpoint/datamap/api/atlas/v2/relationship/guid/$($r.relationshipGuid)" -Headers $headers -SkipHttpErrorCheck
+        if ($resp.StatusCode -in 200,204) { $relsDeleted++ }
+      }
+    }
+  }
+  Write-Host "  [del] $relsDeleted fabric lineage edges" -ForegroundColor DarkGreen
+}
+
 # --- 6b. Atlas datamap entities under our collection.
 # SQL/ADLS scans populate the Atlas data map with tables, columns, schemas,
 # DBs, storage accounts, etc. These persist after scan+source delete and block

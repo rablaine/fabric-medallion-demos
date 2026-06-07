@@ -75,7 +75,8 @@ $postDataPhases += @(
     @{ Script = '13-data-products.ps1';          Args = @{}; Label = 'Data products' },
     @{ Script = '15-okrs.ps1';                   Args = @{}; Label = 'OKRs (objectives + key results)' },
     @{ Script = '17-dp-access-policies.ps1';     Args = @{}; Label = 'Data product access policies + workflows' },
-    @{ Script = '18-critical-data-elements.ps1'; Args = @{}; Label = 'Critical Data Elements + column links' }
+    @{ Script = '18-critical-data-elements.ps1'; Args = @{}; Label = 'Critical Data Elements + column links' },
+    @{ Script = '19-lineage.ps1';                Args = @{}; Label = 'End-to-end medallion lineage (Atlas)' }
 )
 
 $phases = switch ($Mode) {
