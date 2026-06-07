@@ -22,7 +22,10 @@ function Try-Delete {
     $r = Invoke-WebRequest -Method DELETE -Uri $Url -Headers $headers -SkipHttpErrorCheck
     if ($r.StatusCode -in 200,204) { Write-Host "  [del]  $Label" }
     elseif ($r.StatusCode -eq 404) { Write-Host "  [miss] $Label" -ForegroundColor DarkGray }
-    else { Write-Warning "  [$($r.StatusCode)] $Label -- $([System.Text.Encoding]::UTF8.GetString([byte[]]$r.Content))" }
+    else {
+      $body = if ($r.Content -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($r.Content) } else { [string]$r.Content }
+      Write-Warning "  [$($r.StatusCode)] $Label -- $body"
+    }
   } catch {
     Write-Warning "  [err] $Label : $($_.Exception.Message)"
   }
@@ -77,34 +80,18 @@ if ($ctx.dpAccessPolicies -and $ctx.tenantId) {
   }
 }
 
-# --- 1. Objectives (OKRs). MUST run BEFORE data products because DPs are
-# linked to objectives and the API blocks DP delete with "Referenced by:
-# Objective" 400. Strip DP/Term/CDE rels from each objective, delete its key
-# results explicitly (cascade doesn't fire), then DraftDelete the objective.
-Write-Host "=== Objectives ===" -ForegroundColor Cyan
+# Resolve target domains up front (used by DP filter + later domain delete).
 $targetDomainIds = @()
 if ($ctx.governanceDomains) {
   if ($ctx.governanceDomains.retail)   { $targetDomainIds += $ctx.governanceDomains.retail.id }
   if ($ctx.governanceDomains.retailHr) { $targetDomainIds += $ctx.governanceDomains.retailHr.id }
 }
-if ($ctx.objectives) {
-  foreach ($o in $ctx.objectives) {
-    foreach ($et in 'DataProduct','Term','CriticalDataElement') {
-      $rels = (Invoke-RestWithRetry -Uri "$endpoint/datagovernance/catalog/objectives/$($o.id)/relationships?entityType=$et" -Headers $headers -SkipHttpErrorCheck).value
-      foreach ($r in $rels) {
-        if (-not $r.entityId) { continue }
-        Invoke-WebRequest -Method DELETE -Uri "$endpoint/datagovernance/catalog/objectives/$($o.id)/relationships?entityType=$et&entityId=$($r.entityId)" -Headers $headers -SkipHttpErrorCheck | Out-Null
-      }
-    }
-    $krs = (Invoke-RestWithRetry -Uri "$endpoint/datagovernance/catalog/objectives/$($o.id)/keyResults" -Headers $headers -SkipHttpErrorCheck).value
-    foreach ($kr in $krs) {
-      Try-Delete "$endpoint/datagovernance/catalog/objectives/$($o.id)/keyResults/$($kr.id)" "  KR '$($kr.definition.Substring(0,[Math]::Min(40,$kr.definition.Length)))...'"
-    }
-    Try-DraftDelete "$endpoint/datagovernance/catalog/objectives/$($o.id)" "objective '$($o.definition.Substring(0,[Math]::Min(50,$o.definition.Length)))...'"
-  }
-}
 
-# --- 2. Data products (now that objectives are gone the DP delete is unblocked) ---
+# --- 1. Data products. MUST run BEFORE objectives. Purview tracks rels
+# bidirectionally for referential integrity (same gotcha as terms), so even
+# after we strip the Objective->DP edge from the objective side, the DP->
+# Objective edge keeps the objective alive. Deleting DPs first removes both
+# sides of every edge, then objectives delete cleanly.
 Write-Host "=== Data products ===" -ForegroundColor Cyan
 $existingDps = (Invoke-RestWithRetry -Uri "$endpoint/datagovernance/catalog/dataproducts" -Headers $headers).value
 $targetDpNames = @('Sales','Customer 360','Inventory','Workforce')
@@ -115,7 +102,7 @@ foreach ($dp in $existingDps) {
   }
 }
 
-# --- 2b. DP workflows. Must run AFTER data product delete (workflow DELETE 400s while DP exists). ---
+# --- 1b. DP workflows. Must run AFTER data product delete (workflow DELETE 400s while DP exists). ---
 Write-Host "=== DP workflows ===" -ForegroundColor Cyan
 if ($ctx.dpAccessPolicies -and $ctx.tenantId) {
   $tenantApi = "https://$($ctx.tenantId)-api.purview-service.microsoft.com"
@@ -124,6 +111,28 @@ if ($ctx.dpAccessPolicies -and $ctx.tenantId) {
       $wfUrl = "$tenantApi/datagovernance/dataaccess/workflows/$($p.workflowId)"
       Try-Delete $wfUrl "DP workflow '$($p.dpName)' (id=$($p.workflowId))"
     }
+  }
+}
+
+# --- 2. Objectives (OKRs). Runs AFTER data products so the DP->Objective
+# edges are gone. Still strip residual Term/CDE rels and explicitly delete
+# key results (cascade doesn't fire), then DraftDelete the objective.
+Write-Host "=== Objectives ===" -ForegroundColor Cyan
+if ($ctx.objectives) {
+  foreach ($o in $ctx.objectives) {
+    # Objective /relationships only accepts entityType=DataProduct (API rejects
+    # Term / CriticalDataElement with 400 "must be DataProduct"). Term + CDE
+    # edges to objectives are cleared from the *other* side (CDE/term delete).
+    $rels = (Invoke-RestWithRetry -Uri "$endpoint/datagovernance/catalog/objectives/$($o.id)/relationships?entityType=DataProduct" -Headers $headers -SkipHttpErrorCheck).value
+    foreach ($r in $rels) {
+      if (-not $r.entityId) { continue }
+      Invoke-WebRequest -Method DELETE -Uri "$endpoint/datagovernance/catalog/objectives/$($o.id)/relationships?entityType=DataProduct&entityId=$($r.entityId)" -Headers $headers -SkipHttpErrorCheck | Out-Null
+    }
+    $krs = (Invoke-RestWithRetry -Uri "$endpoint/datagovernance/catalog/objectives/$($o.id)/keyResults" -Headers $headers -SkipHttpErrorCheck).value
+    foreach ($kr in $krs) {
+      Try-Delete "$endpoint/datagovernance/catalog/objectives/$($o.id)/keyResults/$($kr.id)" "  KR '$($kr.definition.Substring(0,[Math]::Min(40,$kr.definition.Length)))...'"
+    }
+    Try-DraftDelete "$endpoint/datagovernance/catalog/objectives/$($o.id)" "objective '$($o.definition.Substring(0,[Math]::Min(50,$o.definition.Length)))...'"
   }
 }
 

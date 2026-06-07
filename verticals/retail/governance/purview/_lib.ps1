@@ -67,10 +67,11 @@ function Invoke-RestWithRetry {
         [hashtable]$Headers,
         [object]$Body,
         [string]$ContentType,
-        [int]$MaxRetries = 6
+        [int]$MaxRetries = 6,
+        [switch]$SkipHttpErrorCheck
     )
     $forward = @{}
-    foreach ($k in 'Method','Uri','Headers','Body','ContentType') {
+    foreach ($k in 'Method','Uri','Headers','Body','ContentType','SkipHttpErrorCheck') {
         if ($PSBoundParameters.ContainsKey($k)) { $forward[$k] = $PSBoundParameters[$k] }
     }
     for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
