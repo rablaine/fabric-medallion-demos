@@ -85,12 +85,32 @@ $phases = switch ($Mode) {
     default    { $preDataPhases + $postDataPhases }
 }
 
+# Run each phase in its own try/catch. Most phases are independent (e.g. a
+# failed Fabric scan shouldn't block CDE creation; a stuck SQL scan shouldn't
+# block governance domain creation). Track failures, surface a summary at the
+# end, then throw an aggregate so the deploy.ps1 wrapper records "Purview
+# pre-data error (continuing)" exactly as before.
+$failed = @()
 foreach ($p in $phases) {
     Write-Host ""
     Write-Host "--- $($p.Label) ($($p.Script)) ---" -ForegroundColor Cyan
     $splat = $p.Args
-    & (Join-Path $PSScriptRoot $p.Script) @splat
+    try {
+        & (Join-Path $PSScriptRoot $p.Script) @splat
+    } catch {
+        $msg = "$($_.Exception.Message)"
+        Write-Host "  [FAILED] $($p.Script): $msg" -ForegroundColor Red
+        $failed += [pscustomobject]@{ Script = $p.Script; Label = $p.Label; Error = $msg }
+    }
 }
 
 Write-Host ""
+if ($failed.Count -gt 0) {
+    Write-Host "=== Phase summary: $($failed.Count) failed, $($phases.Count - $failed.Count) succeeded ===" -ForegroundColor Yellow
+    foreach ($f in $failed) {
+        Write-Host "  [FAILED] $($f.Script) -- $($f.Error)" -ForegroundColor Red
+    }
+    throw "Purview phase '$Mode' completed with $($failed.Count) failed phase(s): $(($failed.Script) -join ', ')"
+}
+
 Write-Host "Purview governance phase '$Mode' complete." -ForegroundColor Green

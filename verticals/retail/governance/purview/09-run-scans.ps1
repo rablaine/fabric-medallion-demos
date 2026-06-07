@@ -14,7 +14,7 @@
 param(
     [switch]$SqlOnly,
     [switch]$AdlsOnly,
-    [int]$TimeoutMinutes = 30
+    [int]$TimeoutMinutes = 45
 )
 
 $ErrorActionPreference = 'Stop'
@@ -96,9 +96,11 @@ function Wait-ScanRun {
     $url = "$endpoint/scan/datasources/$DataSource/scans/$ScanName/runs/$RunId`?api-version=2022-02-01-preview"
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     $lastStatus = ''
+    $lastResp = $null
     while ((Get-Date) -lt $deadline) {
         $r = Invoke-PurviewRest -Method GET -Url $url
         if ($r) {
+            $lastResp = $r
             $status = $r.status
             if ($status -ne $lastStatus) {
                 Write-Host "    [$status] discovered=$($r.assetsDiscovered)" -ForegroundColor Yellow
@@ -110,7 +112,23 @@ function Wait-ScanRun {
         }
         Start-Sleep -Seconds 15
     }
-    throw "Scan did not finish within $TimeoutMinutes minutes (last=$lastStatus)"
+    # Deadline hit. Do one final poll (the run may have just finished) before
+    # giving up. If still non-terminal, warn and return the last response so the
+    # caller can record status/discovered counts and move on. The scan keeps
+    # running on the Purview side regardless; downstream governance phases are
+    # independent of scan completion (they discover assets via the catalog
+    # async). Throwing here only blocks unrelated phases for no benefit.
+    try {
+        $final = Invoke-PurviewRest -Method GET -Url $url
+        if ($final) { $lastResp = $final; $lastStatus = $final.status }
+        if ($final -and $final.status -in @('Succeeded','Failed','Canceled','PartialSucceeded','TransientFailure','Quarantined')) {
+            Write-Host "    [$($final.status)] discovered=$($final.assetsDiscovered) (terminal at deadline)" -ForegroundColor Yellow
+            return $final
+        }
+    } catch {}
+    Write-Warning "Scan $ScanName did not reach a terminal state within $TimeoutMinutes min (last=$lastStatus). Continuing; check Purview for completion."
+    if ($lastResp) { return $lastResp }
+    return [pscustomobject]@{ status = $lastStatus; assetsDiscovered = 0; errorMessage = "timeout after $TimeoutMinutes min" }
 }
 
 # ---------- Main flow with try/finally so Close-Network always runs ---------
@@ -143,6 +161,12 @@ Write-Host ""
 Write-Host "=== Summary ===" -ForegroundColor Cyan
 $results | Format-Table -AutoSize
 
-if ($results | Where-Object { $_.Status -ne 'Succeeded' }) {
-    exit 1
+# Don't fail the whole orchestrator on a non-Succeeded scan. The downstream
+# governance phases (domains, terms, DPs, CDEs, lineage) are independent of
+# scan completion -- they hit the catalog/atlas APIs which surface assets
+# asynchronously. A still-Running or PartialSucceeded scan is logged here for
+# visibility; the user can re-trigger from Purview UI if needed.
+$bad = @($results | Where-Object { $_.Status -ne 'Succeeded' })
+if ($bad.Count -gt 0) {
+    Write-Warning "$($bad.Count) scan(s) did not reach Succeeded: $(($bad | ForEach-Object { "$($_.Source)=$($_.Status)" }) -join ', ')"
 }
