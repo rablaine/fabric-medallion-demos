@@ -64,7 +64,7 @@ $kindMap = @{
     Lakehouse        = @{ Segment='lakehouses';        Type='fabric_lakehouse' }
     SQLEndpoint      = @{ Segment='lakewarehouses';    Type='fabric_lake_warehouse' }
     Warehouse        = @{ Segment='datawarehouses';    Type='fabric_data_warehouse' }
-    MirroredDatabase = @{ Segment='lakewarehouses';    Type='fabric_lake_warehouse' }
+    MirroredDatabase = $null  # Fabric scan catalogs the sibling SQLEndpoint, not the MirroredDatabase wrapper -- skip to avoid spurious "no GUID" warning
     Notebook         = @{ Segment='synapsenotebooks';  Type='fabric_synapse_notebook' }
     DataPipeline     = @{ Segment='pipelines';         Type='fabric_pipeline' }
     KQLDatabase      = @{ Segment='databases';         Type='fabric_kusto_database' }
