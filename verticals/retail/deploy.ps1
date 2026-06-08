@@ -576,6 +576,7 @@ if (`$Workspaces.Count -gt 0) {
     Write-Host 'Deleting workspace managed private endpoints (must precede workspace + RG delete)...' -ForegroundColor Cyan
     `$fabToken = (az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv)
     `$workspacesWithMpes = @()
+    `$workspacesAlreadyGone = @{}
     foreach (`$w in `$Workspaces) {
         try {
             `$mpes = (Invoke-FabricRest -Token `$fabToken -Method GET -Path "/workspaces/`$(`$w.Id)/managedPrivateEndpoints").Body.value
@@ -590,7 +591,16 @@ if (`$Workspaces.Count -gt 0) {
                 }
             }
         } catch {
-            Write-Host "  could not list MPEs in `$(`$w.Name): `$_" -ForegroundColor DarkYellow
+            `$errStr = `$_.ToString()
+            # Workspace already gone (prior teardown ran, RG drop blocked by stuck infra).
+            # Fabric returns 404 (WorkspaceNotFound) or 401 ("not authorized") on missing
+            # workspaces. Either way: nothing to clean up here -- mark for skip downstream.
+            if (`$errStr -match 'WorkspaceNotFound|404 \(Not Found\)|401 \(Unauthorized\)|User is not authorized') {
+                Write-Host "  `$(`$w.Name): workspace already gone -- skipping MPE phase" -ForegroundColor DarkGray
+                `$workspacesAlreadyGone[`$w.Id] = `$true
+            } else {
+                Write-Host "  could not list MPEs in `$(`$w.Name): `$_" -ForegroundColor DarkYellow
+            }
         }
     }
 
@@ -619,7 +629,12 @@ if (`$Workspaces.Count -gt 0) {
     Write-Host 'Deleting Fabric workspaces...' -ForegroundColor Cyan
     `$failedWorkspaces = @()
     foreach (`$w in `$Workspaces) {
+        if (`$workspacesAlreadyGone[`$w.Id]) {
+            Write-Host "  `$(`$w.Name): already gone (confirmed during MPE phase)" -ForegroundColor DarkGray
+            continue
+        }
         `$deleted = `$false
+        `$mpeWait = 15  # exp backoff: 15,30,60,120,240,300 (capped)
         for (`$attempt = 1; `$attempt -le 6; `$attempt++) {
             try {
                 Invoke-FabricRest -Token `$fabToken -Method DELETE -Path "/workspaces/`$(`$w.Id)" | Out-Null
@@ -628,9 +643,18 @@ if (`$Workspaces.Count -gt 0) {
                 break
             } catch {
                 `$errMsg = `$_.ToString()
+                # 404 WorkspaceNotFound == already deleted == success. Don't fail teardown
+                # over a workspace that's gone (common when a prior teardown got past Fabric
+                # but stalled on RG delete due to stuck vnet/NSGs).
+                if (`$errMsg -match 'WorkspaceNotFound|404 \(Not Found\)') {
+                    Write-Host "  `$(`$w.Name): already gone (404)" -ForegroundColor DarkGray
+                    `$deleted = `$true
+                    break
+                }
                 if (`$errMsg -match 'WorkspaceContainsManagedEndpoints' -and `$attempt -lt 6) {
-                    Write-Host "  `$(`$w.Name): still has MPEs attached (attempt `$attempt/6), waiting 30s..." -ForegroundColor DarkYellow
-                    Start-Sleep -Seconds 30
+                    Write-Host "  `$(`$w.Name): still has MPEs attached (attempt `$attempt/6), waiting `${mpeWait}s..." -ForegroundColor DarkYellow
+                    Start-Sleep -Seconds `$mpeWait
+                    `$mpeWait = [Math]::Min(300, `$mpeWait * 2)
                     continue
                 }
                 Write-Host "  FAILED `$(`$w.Name): `$_" -ForegroundColor Red
