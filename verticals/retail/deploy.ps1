@@ -18,24 +18,152 @@
 
 .EXAMPLE
     .\deploy.ps1
+
+.EXAMPLE
+    .\deploy.ps1 -StartOver
+    Ignores any prior crashed-deploy state file and starts fresh.
 #>
 
 [CmdletBinding()]
-param()
+param(
+    [switch]$StartOver  # ignore any prior crashed-deploy state file
+)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
 # -----------------------------------------------------------------------------
-# Tee everything to a timestamped log under logs/ so the user has a permanent
-# record after the console closes (helpful for diagnosing failures).
-# Start-Transcript captures Write-Host output and Read-Host prompts both.
+# Move pwsh's working directory OUT of the package folder so that nothing in
+# this process keeps a handle on it. Without this, the user can't delete the
+# downloaded package folder while deploy.ps1 is running (or while it's at the
+# final 'Read-Host "Press Enter to exit"' prompt). All path lookups below use
+# $PSScriptRoot, so the actual working directory is irrelevant for correctness.
 # -----------------------------------------------------------------------------
-$logDir = Join-Path $PSScriptRoot 'logs'
-if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-$logPath = Join-Path $logDir ("deploy-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+Set-Location $env:TEMP
+
+# -----------------------------------------------------------------------------
+# Tee everything to a timestamped log so the user has a permanent record after
+# the console closes (helpful for diagnosing failures).
+#
+# Primary log lives inside the package folder ($PSScriptRoot\logs\) so it's
+# right there with deploy.cmd while the script runs. On exit we copy it to
+# %LOCALAPPDATA%\Contoso\deploy-logs\ for retention -- the user is expected
+# to delete the downloaded package after a run, and the retained copy survives
+# that.
+# -----------------------------------------------------------------------------
+$logName     = "deploy-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss')
+$logDir      = Join-Path $PSScriptRoot 'logs'
+$retainDir   = Join-Path $env:LOCALAPPDATA 'Contoso\deploy-logs'
+if (-not (Test-Path $logDir))    { New-Item -ItemType Directory -Path $logDir    -Force | Out-Null }
+if (-not (Test-Path $retainDir)) { New-Item -ItemType Directory -Path $retainDir -Force | Out-Null }
+$logPath    = Join-Path $logDir    $logName
+$retainPath = Join-Path $retainDir $logName
 try { Start-Transcript -Path $logPath -Append | Out-Null } catch { }
 Write-Host "Logging to $logPath" -ForegroundColor DarkGray
+Write-Host "  (copied to $retainPath on exit)" -ForegroundColor DarkGray
+
+function Complete-Log {
+    try { Stop-Transcript | Out-Null } catch { }
+    try { if (Test-Path $logPath) { Copy-Item -LiteralPath $logPath -Destination $retainPath -Force -ErrorAction Stop } } catch { }
+}
+
+# -----------------------------------------------------------------------------
+# Deploy state file -- crash detection + reattach context.
+#
+# Written after every Write-Step + at terminal states (completed/failed).
+# Lives in $PSScriptRoot\logs\.deploy-state.json so it survives across
+# re-runs from the same package but doesn't pollute LOCALAPPDATA.
+#
+# We do NOT do automatic per-step resume -- the script has hundreds of
+# locals ($outputs, $workspaces, $fabricToken, etc.) that would all need
+# rehydration from Azure/Fabric. Instead, on next run we DETECT the prior
+# crash, show the user where we died and how long ago, and let them choose
+# to continue (relying on the RG-exists / workspace-exists branches that
+# already make most steps idempotent) or to teardown first.
+#
+# Use -StartOver to skip the prompt and overwrite the prior state.
+# -----------------------------------------------------------------------------
+$script:StateFile     = Join-Path $logDir '.deploy-state.json'
+$script:DeployId      = [guid]::NewGuid().ToString('N').Substring(0,8)
+$script:CurrentStepNo = 0
+$script:CurrentStep   = ''
+$script:DeployStartedAt = (Get-Date).ToString('o')
+
+function Save-DeployState {
+    param(
+        [ValidateSet('running','completed','failed')][string]$Status = 'running',
+        [string]$FailureReason = ''
+    )
+    try {
+        $obj = [pscustomobject]@{
+            deploy_id        = $script:DeployId
+            started_at       = $script:DeployStartedAt
+            updated_at       = (Get-Date).ToString('o')
+            status           = $Status
+            current_step_no  = $script:CurrentStepNo
+            current_step     = $script:CurrentStep
+            failure_reason   = $FailureReason
+            log_path         = $logPath
+            resource_group   = if ($config) { $config.RESOURCE_GROUP } else { '' }
+            subscription_id  = if ($selectedSub) { $selectedSub.id } else { '' }
+            tenant_id        = if ($selectedSub) { $selectedSub.tenantId } else { '' }
+        }
+        $obj | ConvertTo-Json | Set-Content -Path $script:StateFile -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        # state file is advisory; never fail the deploy because we couldn't write it
+    }
+}
+
+# trap fires on any uncaught throw. Without it the script exits before
+# Stop-Transcript runs and the log copy never happens, so the user loses
+# the post-crash log when they delete the package folder. Save-DeployState
+# records the crash so the next run shows where we died.
+trap { Save-DeployState -Status 'failed' -FailureReason $_.Exception.Message; Complete-Log; break }
+
+# -----------------------------------------------------------------------------
+# Prior-deploy state detection.
+#
+# If a prior deploy from this package crashed (or is still running in another
+# console) the state file from $logDir tells us where. Show context so the
+# user isn't blindly re-running into a half-built RG. Use -StartOver to skip.
+#
+# Must run BEFORE the first Save-DeployState call (Write-Step writes state),
+# otherwise we read back the row we just wrote and warn about ourselves.
+# -----------------------------------------------------------------------------
+if ((Test-Path $script:StateFile) -and -not $StartOver) {
+    try {
+        $prior = Get-Content -Raw -Path $script:StateFile | ConvertFrom-Json
+        $age = New-TimeSpan -Start ([datetime]::Parse($prior.updated_at)) -End (Get-Date)
+        $ageStr = if ($age.TotalHours -ge 1) { "{0:N1}h ago" -f $age.TotalHours } else { "{0:N0}m ago" -f $age.TotalMinutes }
+        Write-Host ''
+        switch ($prior.status) {
+            'completed' {
+                Write-Host "Prior deploy from this package COMPLETED $ageStr (id=$($prior.deploy_id), RG=$($prior.resource_group))." -ForegroundColor Yellow
+                Write-Host "Re-running will attempt to add to / refresh the existing deployment." -ForegroundColor Yellow
+            }
+            'failed' {
+                Write-Host "Prior deploy from this package FAILED $ageStr at step $($prior.current_step_no):" -ForegroundColor Red
+                Write-Host "    `"$($prior.current_step)`"" -ForegroundColor Red
+                if ($prior.failure_reason) { Write-Host "    reason: $($prior.failure_reason)" -ForegroundColor DarkRed }
+                Write-Host "    log:    $($prior.log_path)" -ForegroundColor DarkGray
+                Write-Host "    RG:     $($prior.resource_group) (will be reattached if it still exists)" -ForegroundColor DarkGray
+            }
+            default {
+                Write-Host "Prior deploy state shows STATUS=$($prior.status), last update $ageStr at step $($prior.current_step_no): `"$($prior.current_step)`"" -ForegroundColor Yellow
+                Write-Host "Either another deploy is still running, or the prior run was killed (Ctrl-C / window closed)." -ForegroundColor Yellow
+            }
+        }
+        Write-Host ''
+        $ans = Read-Host "Continue? Re-run will re-detect existing resources where possible. [y/N]"
+        if ($ans -notmatch '^(y|yes)$') {
+            Write-Host "Aborted. Re-run with -StartOver to bypass this prompt, or run teardown.cmd to wipe the prior RG first." -ForegroundColor Yellow
+            Complete-Log
+            exit 0
+        }
+    } catch {
+        Write-Host "    (could not parse prior state file: $_)" -ForegroundColor DarkGray
+    }
+}
 
 # -----------------------------------------------------------------------------
 # Helpers
@@ -54,19 +182,109 @@ function Write-Step($msg) {
     Write-Host "==> $msg" -ForegroundColor Cyan
     $script:__stepStart = Get-Date
     $script:__stepLabel = $msg
+    $script:CurrentStepNo++
+    $script:CurrentStep = $msg
+    Save-DeployState -Status 'running'
 }
 function Write-Done {
+    param([switch]$NoTotal)
     if ($script:__stepStart) {
         $elapsed = (Get-Date) - $script:__stepStart
         Write-Host ("    [time] {0} took {1:mm\:ss\.f}" -f $script:__stepLabel, $elapsed) -ForegroundColor DarkGray
     }
-    $total = (Get-Date) - $script:__deployStart
-    Write-Host ("    [time] TOTAL deploy runtime: {0:hh\:mm\:ss}" -f $total) -ForegroundColor Yellow
+    if (-not $NoTotal) {
+        $total = (Get-Date) - $script:__deployStart
+        Write-Host ("    [time] TOTAL deploy runtime: {0:hh\:mm\:ss}" -f $total) -ForegroundColor Yellow
+    }
     $script:__stepStart = $null
 }
 function Write-Info($msg)    { Write-Host "    $msg" -ForegroundColor Gray }
 function Write-Ok($msg)      { Write-Host "    [OK] $msg" -ForegroundColor Green }
 function Write-Warn2($m)     { Write-Host "    [WARN] $m" -ForegroundColor Yellow }
+
+# Tenant captured at sign-in; used by Invoke-AzWithRetry to run 'az login
+# --tenant <X>' if silent refresh fails. Populated below after 'az login'.
+$script:DeployTenantId = ''
+
+# -----------------------------------------------------------------------------
+# Invoke-AzWithRetry -- transparent retry wrapper for 'az' calls.
+#
+# Why: 'az' caches tokens but a long deploy (Bicep ~5min + Fabric ~30min +
+# Purview ~20min) routinely crosses the 1hr access-token TTL. Continuous
+# Access Evaluation (CAE) can also revoke tokens mid-deploy. Both surface
+# as exit code 1 with stderr like "AADSTS70043 / TokenExpired / please run
+# 'az login'". Without a wrapper, every late-deploy 'az' call is a coin
+# flip and a crash means full teardown + restart.
+#
+# Behavior:
+#   - run the scriptblock, capture stderr + LASTEXITCODE
+#   - exit 0       -> return stdout
+#   - token error  -> silent 'az account get-access-token' (cached refresh
+#                     token), then interactive 'az login --tenant <X>' if
+#                     that also fails. Re-runs the call. Capped at 2 token
+#                     refreshes per call.
+#   - 429/5xx/transport -> exp backoff (cap 30s), capped at 6 attempts.
+#   - other       -> throw with stderr.
+#
+# Usage:
+#   $sub = Invoke-AzWithRetry -Label 'az account show' { az account show -o json } | ConvertFrom-Json
+#   Invoke-AzWithRetry -Label 'rg create' { az group create -n $rg -l $loc --output none } | Out-Null
+#
+# AllowNonZeroExit: pass when the caller treats non-zero as "not found" /
+# "no rows" (e.g. 'az purview account list' against a sub with no perms).
+# -----------------------------------------------------------------------------
+function Invoke-AzWithRetry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][scriptblock]$Script,
+        [string]$Label = 'az call',
+        [int]$MaxAttempts = 6,
+        [switch]$AllowNonZeroExit
+    )
+    $maxTokenRefreshes = 2
+    $tokenRefreshes    = 0
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $errFile = [System.IO.Path]::GetTempFileName()
+        try {
+            $result = & $Script 2>$errFile
+            $exit   = $LASTEXITCODE
+            $stderr = (Get-Content -Raw -Path $errFile -ErrorAction SilentlyContinue) ?? ''
+            if ($exit -eq 0) { return $result }
+            if ($AllowNonZeroExit -and $exit -ne 0 -and -not ($stderr -match 'AADSTS|TokenExpired|please run.*az login|InvalidAuthenticationToken|429|5\d\d ')) {
+                return $result
+            }
+            $isTokenExpired = $stderr -match 'AADSTS70043|AADSTS50173|AADSTS500011|AADSTS50076|AADSTS50079|TokenExpired|Access token has expired|InvalidAuthenticationToken|expired or revoked|Continuous Access Evaluation|please run.*az login|Please run.*az login|run.*az login.*again'
+            if ($isTokenExpired -and $tokenRefreshes -lt $maxTokenRefreshes) {
+                $tokenRefreshes++
+                Write-Host "    [auth] ${Label}: token rejected (refresh $tokenRefreshes/$maxTokenRefreshes); re-acquiring..." -ForegroundColor DarkYellow
+                az account get-access-token --resource https://management.azure.com --output none 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    if (-not $script:DeployTenantId) {
+                        throw "${Label}: token expired, silent refresh failed, and tenant id not registered. Restart deploy after 'az login'."
+                    }
+                    Write-Host "    [auth] Silent refresh failed; launching 'az login --tenant $script:DeployTenantId'..." -ForegroundColor Yellow
+                    az login --tenant $script:DeployTenantId | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "${Label}: az login failed (cannot recover)." }
+                    Write-Host "    [auth] Re-authenticated; resuming." -ForegroundColor Green
+                }
+                continue
+            }
+            $isTransient = $stderr -match 'TooManyRequests|\b429\b|throttl|\b500\b|\b502\b|\b503\b|\b504\b|temporary|service unavailable|timeout|timed out|connection.*reset|connection.*aborted|name or service|name resolution|EOF|TLS|SSL'
+            if ($isTransient -and $attempt -lt $MaxAttempts) {
+                $delay = [int][Math]::Min(30, [Math]::Pow(2, $attempt))
+                Write-Host "    [retry] ${Label}: transient error (attempt $attempt/$MaxAttempts); retrying in ${delay}s" -ForegroundColor DarkYellow
+                if ($stderr) { Write-Host "      $($stderr.Trim() -replace "`r?`n",' | ')" -ForegroundColor DarkGray }
+                Start-Sleep -Seconds $delay
+                continue
+            }
+            throw "${Label} failed (exit $exit): $($stderr.Trim())"
+        }
+        finally {
+            Remove-Item -LiteralPath $errFile -ErrorAction SilentlyContinue
+        }
+    }
+    throw "${Label} failed after $MaxAttempts attempts"
+}
 
 # -----------------------------------------------------------------------------
 # Teardown emitter. Called twice during deploy:
@@ -81,6 +299,7 @@ function Write-Teardown {
         [Parameter(Mandatory)][string]$Rg,
         [Parameter(Mandatory)][string]$Sub,
         [Parameter(Mandatory)][string]$Tenant,
+        [string]$DeployedBy = '',
         [string]$Capacity = '',
         [object[]]$Workspaces = @(),
         [string]$SpAppId = '',
@@ -88,7 +307,7 @@ function Write-Teardown {
         [string[]]$ConnectionIds = @()
     )
 
-    $teardownPath = Join-Path $PSScriptRoot 'teardown.ps1'
+    $teardownPath = Join-Path $script:teardownDir 'teardown.ps1'
     $wsLines = if ($Workspaces -and $Workspaces.Count -gt 0) {
         ($Workspaces | ForEach-Object { "    @{ Id = '$($_.id)'; Name = '$($_.displayName)' }" }) -join ",`r`n"
     } else { '' }
@@ -104,15 +323,35 @@ function Write-Teardown {
 #Requires -Version 7.0
 `$ErrorActionPreference = 'Stop'
 
-`$logDir = Join-Path `$PSScriptRoot 'logs'
-if (-not (Test-Path `$logDir)) { New-Item -ItemType Directory -Path `$logDir -Force | Out-Null }
-`$logPath = Join-Path `$logDir ("teardown-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+# Move pwsh's working directory OUT of the package folder so the user can
+# delete it while teardown is running (or at the final prompt). All path
+# lookups use `$PSScriptRoot, so cwd is irrelevant for correctness.
+Set-Location `$env:TEMP
+
+# Log to PSScriptRoot\logs\ (in the package folder, next to deploy.cmd) while
+# teardown runs, then on exit copy to %LOCALAPPDATA%\Contoso\teardown-logs\ for
+# retention after the user deletes the package folder.
+`$logName     = "teardown-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss')
+`$logDir      = Join-Path `$PSScriptRoot 'logs'
+`$retainDir   = Join-Path `$env:LOCALAPPDATA 'Contoso\teardown-logs'
+if (-not (Test-Path `$logDir))    { New-Item -ItemType Directory -Path `$logDir    -Force | Out-Null }
+if (-not (Test-Path `$retainDir)) { New-Item -ItemType Directory -Path `$retainDir -Force | Out-Null }
+`$logPath    = Join-Path `$logDir    `$logName
+`$retainPath = Join-Path `$retainDir `$logName
 try { Start-Transcript -Path `$logPath -Append | Out-Null } catch { }
 Write-Host "Logging to `$logPath" -ForegroundColor DarkGray
+Write-Host "  (copied to `$retainPath on exit)" -ForegroundColor DarkGray
+
+function Complete-Log {
+    try { Stop-Transcript | Out-Null } catch { }
+    try { if (Test-Path `$logPath) { Copy-Item -LiteralPath `$logPath -Destination `$retainPath -Force -ErrorAction Stop } } catch { }
+}
+trap { Complete-Log; break }
 
 `$ResourceGroup = '$Rg'
 `$Subscription  = '$Sub'
 `$TenantId      = '$Tenant'
+`$DeployedByUser = '$DeployedBy'  # account that ran deploy.ps1; teardown verifies match
 `$CapacityName  = '$Capacity'
 `$SpAppId       = '$SpAppId'
 `$GatewayId     = '$GatewayId'
@@ -123,7 +362,21 @@ $wsLines
 $connLines
 )
 
-. (Join-Path `$PSScriptRoot 'scripts\Fabric.ps1')
+# Absolute path to the deploy package this teardown was generated from.
+# Same folder as this script (teardown.ps1 lives in the package root).
+`$PackageRoot = `$PSScriptRoot
+if (-not (Test-Path (Join-Path `$PackageRoot 'scripts\Fabric.ps1'))) {
+    Write-Host "WARNING: deploy package looks incomplete at:" -ForegroundColor Yellow
+    Write-Host "  `$PackageRoot" -ForegroundColor Yellow
+    Write-Host "  Fabric REST + Purview teardown steps will be skipped." -ForegroundColor Yellow
+    Write-Host "  Only the resource group delete will run." -ForegroundColor Yellow
+    Write-Host ''
+}
+
+`$FabricHelperPath = Join-Path `$PackageRoot 'scripts\Fabric.ps1'
+if (Test-Path `$FabricHelperPath) {
+    . `$FabricHelperPath
+}
 
 # -----------------------------------------------------------------------------
 # Tenant / subscription verification + existence preflight.
@@ -140,7 +393,7 @@ function Test-FabricWorkspace {
 }
 function Invoke-Preflight {
     `$ctx = Get-AzContext
-    if (-not `$ctx) { return [pscustomobject]@{ Ok=`$false; Reason='not-logged-in'; Ctx=`$null; RgExists=`$false; WsExists=`$false } }
+    if (-not `$ctx) { return [pscustomobject]@{ Ok=`$false; Reason='not-logged-in'; Ctx=`$null; RgExists=`$false; WsExists=`$false; GraphOk=`$false } }
     `$rgExists = (az group exists --subscription `$ctx.id --name `$ResourceGroup) -eq 'true'
     `$wsExists = `$false
     try {
@@ -149,10 +402,20 @@ function Invoke-Preflight {
             `$wsExists = Test-FabricWorkspace -Token `$fabTok -Id `$Workspaces[0].Id
         }
     } catch { }
+    # Probe Microsoft Graph BEFORE any destructive work. Continuous Access
+    # Evaluation can invalidate Graph tokens independently of ARM/Fabric
+    # tokens, and the symptom is a mid-teardown failure on `az ad sp delete`
+    # AFTER everything else has been ripped down (orphan SP, user has to
+    # clean up manually). Catching it here forces the existing re-auth flow.
+    `$graphOk = `$false
+    `$graphErr = ''
+    az ad signed-in-user show -o none 2>&1 | Out-Null
+    if (`$LASTEXITCODE -eq 0) { `$graphOk = `$true } else { `$graphErr = 'graph-cae-or-perm' }
     `$tenantOk = (`$ctx.tenantId -eq `$TenantId)
     `$subOk    = (`$ctx.id       -eq `$Subscription)
-    `$ok = `$tenantOk -and `$subOk -and (`$rgExists -or `$wsExists)
-    [pscustomobject]@{ Ok=`$ok; Reason=''; Ctx=`$ctx; TenantOk=`$tenantOk; SubOk=`$subOk; RgExists=`$rgExists; WsExists=`$wsExists }
+    `$userOk   = (-not `$DeployedByUser) -or (`$ctx.user.name -eq `$DeployedByUser)
+    `$ok = `$tenantOk -and `$subOk -and `$userOk -and `$graphOk -and (`$rgExists -or `$wsExists)
+    [pscustomobject]@{ Ok=`$ok; Reason=`$graphErr; Ctx=`$ctx; TenantOk=`$tenantOk; SubOk=`$subOk; UserOk=`$userOk; RgExists=`$rgExists; WsExists=`$wsExists; GraphOk=`$graphOk }
 }
 
 `$pre = Invoke-Preflight
@@ -161,6 +424,7 @@ if (-not `$pre.Ok) {
     Write-Host 'Preflight check FAILED -- not safe to proceed.' -ForegroundColor Red
     Write-Host ''
     Write-Host 'Expected:' -ForegroundColor Yellow
+    if (`$DeployedByUser) { Write-Host "  Signed in as: `$DeployedByUser" }
     Write-Host "  Tenant:       `$TenantId"
     Write-Host "  Subscription: `$Subscription"
     Write-Host "  ResourceGrp:  `$ResourceGroup"
@@ -174,6 +438,10 @@ if (-not `$pre.Ok) {
         Write-Host 'Status:' -ForegroundColor Yellow
         Write-Host ("  Tenant match:           {0}" -f `$(if (`$pre.TenantOk) {'yes'} else {'NO'}))
         Write-Host ("  Subscription match:     {0}" -f `$(if (`$pre.SubOk)    {'yes'} else {'NO'}))
+        if (`$DeployedByUser) {
+            Write-Host ("  User match:             {0}" -f `$(if (`$pre.UserOk) {'yes'} else {"NO (deployed by `$DeployedByUser)"}))
+        }
+        Write-Host ("  Graph token valid:      {0}" -f `$(if (`$pre.GraphOk)  {'yes'} else {'NO (CAE challenge or missing perms -- needs re-login)'}))
         Write-Host ("  Resource group exists:  {0}" -f `$(if (`$pre.RgExists) {'yes'} else {'NO'}))
         Write-Host ("  Fabric workspace found: {0}" -f `$(if (`$pre.WsExists) {'yes'} else {'NO'}))
     } else {
@@ -238,6 +506,39 @@ if (`$SpAppId) {
     Write-Host '    (no SP recorded)'
 }
 Write-Host ''
+Write-Host '  Microsoft Purview governance (Unified Catalog + scans):' -ForegroundColor Yellow
+`$purviewCtxPath = Join-Path `$PackageRoot 'governance\purview\context.json'
+if (Test-Path `$purviewCtxPath) {
+    try {
+        `$pctx = Get-Content `$purviewCtxPath -Raw | ConvertFrom-Json
+        Write-Host "    Account:       `$(`$pctx.purview.name)  (`$(`$pctx.purview.endpoint))"
+        if (`$pctx.collection -and `$pctx.collection.name) {
+            Write-Host "    Collection:    `$(`$pctx.collection.name)  (and all datamap entities under it)"
+        }
+        `$srcs = @()
+        if (`$pctx.sources) { `$pctx.sources.PSObject.Properties | ForEach-Object { if (`$_.Value.name) { `$srcs += `$_.Value.name } } }
+        if (`$srcs.Count -gt 0) { Write-Host "    Data sources:  `$(`$srcs -join ', ')" }
+        `$scans = @()
+        if (`$pctx.scans) { `$pctx.scans.PSObject.Properties | ForEach-Object { if (`$_.Value.name) { `$scans += `$_.Value.name } } }
+        if (`$scans.Count -gt 0) { Write-Host "    Scans:         `$(`$scans -join ', ')" }
+        `$domNames = @()
+        if (`$pctx.governanceDomains) { `$pctx.governanceDomains.PSObject.Properties | ForEach-Object { if (`$_.Value.name) { `$domNames += `$_.Value.name } } }
+        if (`$domNames.Count -gt 0) { Write-Host "    Domains (`$(`$domNames.Count)): `$(`$domNames -join ', ')" }
+        if (`$pctx.glossaryTerms)      { Write-Host "    Glossary terms:           `$(@(`$pctx.glossaryTerms).Count)" }
+        if (`$pctx.dataProducts)       { Write-Host "    Data products:            `$(@(`$pctx.dataProducts).Count)" }
+        if (`$pctx.objectives)         { Write-Host "    Objectives + key results: `$(@(`$pctx.objectives).Count) objective(s)" }
+        if (`$pctx.accessPolicies)     { Write-Host "    Term access policies:     `$(@(`$pctx.accessPolicies).Count)" }
+        if (`$pctx.dpAccessPolicies)   { Write-Host "    DP access policies + approval workflows: `$(@(`$pctx.dpAccessPolicies).Count)" }
+        if (`$pctx.criticalDataElements){ Write-Host "    Critical data elements (CDEs): `$(@(`$pctx.criticalDataElements).Count)" }
+        Write-Host '    (all of the above will be deleted via Purview Unified Catalog APIs)' -ForegroundColor DarkGray
+    } catch {
+        Write-Host "    (could not parse context.json: `$_)" -ForegroundColor DarkYellow
+        Write-Host '    teardown-purview.ps1 will run and delete whatever it can resolve.' -ForegroundColor DarkGray
+    }
+} else {
+    Write-Host '    (no Purview context.json -- Purview recipe never ran for this deploy; nothing to delete)' -ForegroundColor DarkGray
+}
+Write-Host ''
 Write-Host '  Azure resource group (and everything in it):' -ForegroundColor Yellow
 Write-Host "    `$ResourceGroup"
 if (`$CapacityName) { Write-Host "      - Fabric capacity:  `$CapacityName (F8)" }
@@ -253,7 +554,25 @@ if (`$ans -ne 'YES') { Write-Host 'Cancelled.'; exit 0 }
 
 az account set --subscription `$Subscription | Out-Null
 
+# Purview teardown FIRST. Idempotent + self-skipping when the recipe never ran
+# (e.g. subscription has no Purview account). Talks only to Purview APIs, so
+# safe to run before tearing down Azure/Fabric resources.
+`$purviewCtx = Join-Path `$PackageRoot 'governance\purview\context.json'
+`$purviewTeardown = Join-Path `$PackageRoot 'governance\purview\teardown-purview.ps1'
+if ((Test-Path `$purviewCtx) -and (Test-Path `$purviewTeardown)) {
+    Write-Host ''
+    Write-Host 'Purview governance teardown...' -ForegroundColor Cyan
+    try { & `$purviewTeardown } catch { Write-Host "  Purview teardown error (continuing): `$_" -ForegroundColor DarkYellow }
+} else {
+    Write-Host '  (no Purview context found; skipping Purview teardown)' -ForegroundColor DarkGray
+}
+
 if (`$Workspaces.Count -gt 0) {
+    if (-not (Get-Command Invoke-FabricRest -ErrorAction SilentlyContinue)) {
+        Write-Host 'Skipping Fabric workspace teardown (Fabric.ps1 helper not available -- package folder was deleted).' -ForegroundColor DarkYellow
+        Write-Host 'The resource group delete below will remove the capacity, which orphans the workspaces.' -ForegroundColor DarkYellow
+        Write-Host 'Manually delete workspaces from https://app.fabric.microsoft.com afterward if needed.' -ForegroundColor DarkYellow
+    } else {
     Write-Host 'Deleting workspace managed private endpoints (must precede workspace + RG delete)...' -ForegroundColor Cyan
     `$fabToken = (az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv)
     `$workspacesWithMpes = @()
@@ -336,12 +655,14 @@ if (`$Workspaces.Count -gt 0) {
         Write-Host 'The resource group (with the Fabric capacity) has NOT been touched.' -ForegroundColor Yellow
         Write-Host 'Wait ~5 min for MPE deprovisioning to settle, then re-run teardown.cmd.' -ForegroundColor Yellow
         Write-Host 'If it fails again, see the troubleshooting notes for orphan-workspace rescue.' -ForegroundColor Yellow
+        Complete-Log
         Read-Host 'Press Enter to exit'
         exit 1
     }
+    } # end else (Fabric helper available)
 }
 
-if (`$ConnectionIds.Count -gt 0) {
+if (`$ConnectionIds.Count -gt 0 -and (Get-Command Invoke-FabricRest -ErrorAction SilentlyContinue)) {
     Write-Host 'Deleting Fabric cloud connections...' -ForegroundColor Cyan
     if (-not `$fabToken) { `$fabToken = (az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv) }
     foreach (`$cid in `$ConnectionIds) {
@@ -355,6 +676,9 @@ if (`$ConnectionIds.Count -gt 0) {
 }
 
 if (`$GatewayId) {
+    if (-not (Get-Command Invoke-FabricRest -ErrorAction SilentlyContinue)) {
+        Write-Host "Skipping VNet data gateway delete (Fabric.ps1 not available -- package folder was deleted). Gateway id: `$GatewayId" -ForegroundColor DarkYellow
+    } else {
     Write-Host 'Deleting Fabric VNet data gateway...' -ForegroundColor Cyan
     try {
         if (-not `$fabToken) { `$fabToken = (az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv) }
@@ -363,15 +687,29 @@ if (`$GatewayId) {
     } catch {
         Write-Host "  skip gateway `${GatewayId}: `$_" -ForegroundColor DarkYellow
     }
+    }
 }
 
 if (`$SpAppId) {
     Write-Host 'Deleting service principal...' -ForegroundColor Cyan
-    az ad sp delete --id `$SpAppId 2>`$null
-    if (`$LASTEXITCODE -eq 0) {
-        Write-Host "  deleted SP `$SpAppId" -ForegroundColor Green
+    # Verify FIRST so we can distinguish "already gone" (200/404) from
+    # "delete failed" (CAE token challenge, perm denied, etc). The previous
+    # blanket 'skip (already gone or permission denied)' message lied when a
+    # CAE InteractionRequired challenge killed the call -- the SP was still
+    # there and silently orphaned.
+    `$existsBefore = az ad sp show --id `$SpAppId -o none 2>`$null; `$showExit = `$LASTEXITCODE
+    if (`$showExit -ne 0) {
+        Write-Host "  SP `$SpAppId already gone" -ForegroundColor Green
     } else {
-        Write-Host "  skip SP `$SpAppId (already gone or permission denied)" -ForegroundColor DarkYellow
+        `$delErr = az ad sp delete --id `$SpAppId 2>&1
+        if (`$LASTEXITCODE -eq 0) {
+            Write-Host "  deleted SP `$SpAppId" -ForegroundColor Green
+        } else {
+            Write-Host "  FAILED to delete SP `$SpAppId" -ForegroundColor Red
+            Write-Host "    az output: `$delErr" -ForegroundColor Red
+            Write-Host "    re-run 'az login --tenant `$TenantId' and then:" -ForegroundColor Yellow
+            Write-Host "      az ad sp delete --id `$SpAppId" -ForegroundColor Yellow
+        }
     }
 }
 
@@ -387,6 +725,7 @@ if (`$LASTEXITCODE -ne 0) {
     `$rgDelOutput | ForEach-Object { Write-Host `$_ -ForegroundColor Red }
     Write-Host '----------------------------------------' -ForegroundColor Red
     Write-Host 'Resource group was NOT deleted. Investigate the error above and re-run teardown.' -ForegroundColor Yellow
+    Complete-Log
     Read-Host 'Press Enter to exit'
     exit 1
 }
@@ -400,23 +739,49 @@ Write-Host '      1 hour, re-run:' -ForegroundColor Yellow
 Write-Host "        az group delete --name `$ResourceGroup --yes" -ForegroundColor Yellow
 Write-Host '      This is normal Azure behavior - the PowerPlatform service association' -ForegroundColor Yellow
 Write-Host '      link on the gateway subnet releases asynchronously.' -ForegroundColor Yellow
+Complete-Log
 Read-Host 'Press Enter to exit'
 "@
     Set-Content -Path $teardownPath -Value $teardownBody -Encoding UTF8
 
-    $teardownCmdPath = Join-Path $PSScriptRoot 'teardown.cmd'
-    $teardownCmdBody = @"
+    # teardown.cmd is a tiny static launcher next to teardown.ps1 in the
+    # package folder. Content never varies between Write-Teardown calls (it
+    # just resolves teardown.ps1 via %~dp0), so write it once and skip on
+    # subsequent calls.
+    $teardownCmdPath = Join-Path $script:teardownPackageRoot 'teardown.cmd'
+    if (-not (Test-Path $teardownCmdPath)) {
+        $teardownCmdBody = @"
 @echo off
 REM Launcher: invokes pwsh 7 via -Command (NOT -File) so stdin/Read-Host work.
 REM Double-click this OR run ``teardown.cmd`` from any shell.
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '%~dp0teardown.ps1'"
-if errorlevel 1 (
+REM %~dp0 = the folder containing this .cmd = the deploy package root. We
+REM capture it BEFORE cd-ing away so the path is right regardless of cwd.
+REM We cd to %TEMP% so neither cmd.exe nor the pwsh child holds the package
+REM folder open as cwd -- that lets the user delete the package later.
+set TEARDOWN_PS1=%~dp0teardown.ps1
+cd /d %TEMP%
+if not exist "%TEARDOWN_PS1%" (
+    echo Teardown script not found at:
+    echo   %TEARDOWN_PS1%
+    echo.
+    echo Either the deployment never completed, or teardown already ran and the
+    echo script was cleaned up. If your resource group still exists you can
+    echo delete it manually:
+    echo   az group delete --name $Rg --yes
+    pause
+    exit /b 1
+)
+pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '%TEARDOWN_PS1%'"
+set TEARDOWN_EXIT=%errorlevel%
+if %TEARDOWN_EXIT% NEQ 0 (
     echo.
     echo Teardown failed. Press any key to close.
     pause >nul
 )
+exit /b %TEARDOWN_EXIT%
 "@
-    Set-Content -Path $teardownCmdPath -Value $teardownCmdBody -Encoding ASCII
+        Set-Content -Path $teardownCmdPath -Value $teardownCmdBody -Encoding ASCII
+    }
 }
 
 # -----------------------------------------------------------------------------
@@ -444,6 +809,20 @@ $config.GetEnumerator() | Sort-Object Key | ForEach-Object {
 }
 
 # -----------------------------------------------------------------------------
+# teardown.ps1 + teardown.cmd both live in the package folder (right next to
+# deploy.cmd, where the user obviously looks for them).
+#
+# (Earlier we tried hosting teardown.ps1 in %LOCALAPPDATA% on the theory that
+# OneDrive sync was racing Explorer-delete on the package folder. It wasn't.
+# Real cause was stale Explorer windows on the Downloads folder holding
+# phantom thumbnail/preview handles into the package subtree. Moving the
+# script doesn't help that, so the script lives where it should: in the
+# package, next to deploy.cmd.)
+# -----------------------------------------------------------------------------
+$script:teardownDir         = $PSScriptRoot
+$script:teardownPackageRoot = $PSScriptRoot  # alias used by the emitted teardown.cmd writer
+
+# -----------------------------------------------------------------------------
 # Tooling checks
 # -----------------------------------------------------------------------------
 Write-Step "Verifying tooling"
@@ -462,7 +841,7 @@ function Confirm-InstallPrereq {
     if ($ans -notmatch '^[Yy]') {
         Write-Host ""
         Write-Host "Can't proceed without $Name. Exiting deployment script." -ForegroundColor Red
-        try { Stop-Transcript | Out-Null } catch { }
+        Complete-Log
         exit 1
     }
 }
@@ -474,7 +853,7 @@ if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
     winget install -e --id Microsoft.AzureCLI --accept-source-agreements --accept-package-agreements
     if ($LASTEXITCODE -ne 0) { throw "Azure CLI install failed (exit $LASTEXITCODE). Install manually from https://aka.ms/installazurecli and re-run." }
     Write-Warn2 "Azure CLI installed. You must close this window and open a NEW pwsh session so 'az' is on PATH, then re-run deploy.ps1."
-    try { Stop-Transcript | Out-Null } catch { }
+    Complete-Log
     exit 0
 }
 Write-Ok "Azure CLI present ($(az version --query '\"azure-cli\"' -o tsv))"
@@ -553,6 +932,11 @@ if (-not $graphOk) {
 $selectedSub = az account show --output json | ConvertFrom-Json
 if (-not $selectedSub) { throw "Could not read active subscription after az login" }
 
+# Register tenant id so Invoke-AzWithRetry can re-auth autonomously if a 401
+# / CAE challenge / TokenExpired hits later in the deploy. Without this it'd
+# crash mid-deploy and force the user to teardown + restart.
+$script:DeployTenantId = $selectedSub.tenantId
+
 Write-Ok "Using account:      $($selectedSub.user.name)"
 Write-Ok "Using subscription: $($selectedSub.name)"
 Write-Info "Subscription ID: $($selectedSub.id)"
@@ -564,6 +948,234 @@ if ($LASTEXITCODE -ne 0 -or -not $signedInUser) { throw "Failed to read signed-i
 $sqlAdminObjectId  = $signedInUser.id
 $sqlAdminLoginName = $signedInUser.userPrincipalName
 Write-Ok "Will grant SQL admin to: $sqlAdminLoginName"
+
+# -----------------------------------------------------------------------------
+# Prerequisite checks for the selected deploy mode (base vs. base + Purview).
+# Every check has a remediation hint. Any failure aborts the script BEFORE any
+# resources are created, so a misconfigured account doesn't leave a half-built
+# RG behind.
+# -----------------------------------------------------------------------------
+$deployPurviewPlanned = ($config['DEPLOY_PURVIEW'] -eq 'true')
+$modeLabel = if ($deployPurviewPlanned) { 'base + Purview governance' } else { 'base (Fabric data estate only)' }
+Write-Step "Prerequisite checks (mode: $modeLabel)"
+
+$prereqs = New-Object System.Collections.Generic.List[object]
+function Start-Prereq($label) {
+    # Print the check label immediately so the user sees progress as we work.
+    Write-Host ("    ...    {0}" -f $label) -ForegroundColor DarkGray -NoNewline
+    [System.Console]::Out.Flush()
+}
+function Add-Prereq($label, $ok, $detail, $remediation) {
+    $prereqs.Add([pscustomobject]@{ Label=$label; Ok=$ok; Detail=$detail; Remediation=$remediation })
+    # Overwrite the in-progress line with the verdict.
+    Write-Host "`r" -NoNewline
+    if ($ok) {
+        Write-Host ("    [OK]   {0}" -f $label) -ForegroundColor Green
+    } else {
+        Write-Host ("    [FAIL] {0}" -f $label) -ForegroundColor Red
+    }
+    if ($detail) { Write-Host ("           {0}" -f $detail) -ForegroundColor DarkGray }
+}
+
+# --- Subscription RBAC: Owner OR (Contributor + User Access Administrator).
+# Bicep creates roleAssignments (function MSI -> Storage roles, etc.), which
+# requires either Owner or both Contributor+UAA at the assignment scope.
+$rbacLabel = 'Subscription RBAC (Owner, or Contributor + User Access Administrator)'
+Start-Prereq $rbacLabel
+$subScope = "/subscriptions/$($selectedSub.id)"
+$roles = @()
+try {
+    $roles = (az role assignment list --assignee $signedInUser.id --scope $subScope --include-inherited --query "[].roleDefinitionName" -o tsv 2>$null) -split "`r?`n" | Where-Object { $_ }
+} catch {}
+$hasOwner   = $roles -contains 'Owner'
+$hasContrib = $roles -contains 'Contributor'
+$hasUAA     = ($roles -contains 'User Access Administrator') -or ($roles -contains 'Role Based Access Control Administrator')
+$rbacOk     = $hasOwner -or ($hasContrib -and $hasUAA)
+Add-Prereq `
+    $rbacLabel `
+    $rbacOk `
+    $(if ($roles.Count) { "have: $($roles -join ', ')" } else { 'no role assignments visible' }) `
+    "Ask an Azure admin to grant your account 'Owner' on subscription $($selectedSub.id), or both 'Contributor' AND 'User Access Administrator'. The Bicep creates RBAC assignments and will fail without these."
+
+# --- Resource providers. Auto-register any that are missing (idempotent;
+# registration is async but Bicep handles in-flight Registering state).
+$requiredProviders = @('Microsoft.Fabric','Microsoft.Insights','Microsoft.Network','Microsoft.PowerPlatform','Microsoft.Sql','Microsoft.Storage','Microsoft.Web')
+$rpLabel = "Resource providers registered ($($requiredProviders -join ', '))"
+Start-Prereq $rpLabel
+$providerStates = @{}
+try {
+    $allProviders = az provider list --query "[].{ns:namespace,state:registrationState}" -o json 2>$null | ConvertFrom-Json
+    foreach ($p in $allProviders) { $providerStates[$p.ns] = $p.state }
+} catch {}
+$toRegister = $requiredProviders | Where-Object { $providerStates[$_] -notin 'Registered','Registering' }
+foreach ($p in $toRegister) {
+    az provider register --namespace $p --output none 2>$null
+}
+if ($toRegister.Count -gt 0) {
+    try {
+        $allProviders = az provider list --query "[].{ns:namespace,state:registrationState}" -o json 2>$null | ConvertFrom-Json
+        $providerStates = @{}
+        foreach ($p in $allProviders) { $providerStates[$p.ns] = $p.state }
+    } catch {}
+}
+$notRegistered = $requiredProviders | Where-Object { $providerStates[$_] -notin 'Registered','Registering' }
+Add-Prereq `
+    $rpLabel `
+    ($notRegistered.Count -eq 0) `
+    $(if ($notRegistered.Count -eq 0) { 'all registered or registering' } else { "not registered: $($notRegistered -join ', ')" }) `
+    "If auto-registration failed, an account with Contributor on the subscription must run: az provider register --namespace <NS>"
+
+# --- Microsoft Fabric tenant access (token + capacity list).
+$fabricLabel = 'Microsoft Fabric tenant access'
+Start-Prereq $fabricLabel
+$fabricOk = $false
+$fabricDetail = ''
+try {
+    $fabTokTest = az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv 2>$null
+    if ($LASTEXITCODE -eq 0 -and $fabTokTest) {
+        $capProbe = Invoke-RestMethod -Uri 'https://api.fabric.microsoft.com/v1/capacities' -Headers @{ Authorization = "Bearer $fabTokTest" }
+        $fabricOk = $true
+        $fabricDetail = "Fabric API reachable; tenant has $($capProbe.value.Count) capacity(ies) visible"
+    } else {
+        $fabricDetail = 'Could not acquire Fabric API token'
+    }
+} catch {
+    $fabricDetail = "Fabric API call failed: $($_.Exception.Message)"
+}
+Add-Prereq `
+    $fabricLabel `
+    $fabricOk `
+    $fabricDetail `
+    "Your tenant admin must enable Microsoft Fabric in the Fabric admin portal (Tenant settings -> Microsoft Fabric -> Users can create Fabric items). https://learn.microsoft.com/fabric/admin/fabric-switch"
+
+# --- Target resource group is not mid-delete. If the user kicked off teardown
+# and immediately re-ran deploy with the same RG name, the RG sits in
+# provisioningState=Deleting for several minutes -- any az group create / Bicep
+# call against it will fail with a confusing error. Catch it here.
+$rgLabel = "Target resource group '$($config.RESOURCE_GROUP)' is not mid-delete"
+Start-Prereq $rgLabel
+$rgState = $null
+$rgOk = $true
+$rgDetail = 'does not exist yet (will be created) or exists in a usable state'
+try {
+    $rgShow = az group show --name $config.RESOURCE_GROUP -o json 2>$null
+    if ($LASTEXITCODE -eq 0 -and $rgShow) {
+        $rgObj = $rgShow | ConvertFrom-Json
+        $rgState = $rgObj.properties.provisioningState
+        if ($rgState -eq 'Deleting') {
+            $rgOk = $false
+            $rgDetail = "RG exists in provisioningState=Deleting (a teardown is still in progress)"
+        } else {
+            $rgDetail = "RG already exists in provisioningState=$rgState (deploy will reuse it)"
+        }
+    }
+} catch {}
+Add-Prereq `
+    $rgLabel `
+    $rgOk `
+    $rgDetail `
+    "Wait a few minutes for the previous teardown to finish, then re-run. Or pick a different RG name in your deployment.config (RESOURCE_GROUP=...)."
+
+# --- Purview-only prereqs ---
+if ($deployPurviewPlanned) {
+    $pvAcctLabel = 'Microsoft Purview account in this subscription'
+    Start-Prereq $pvAcctLabel
+    $pvAccounts = az purview account list -o json 2>$null | ConvertFrom-Json
+    if (-not $pvAccounts -or $pvAccounts.Count -eq 0) {
+        $pvAccounts = az resource list --resource-type 'Microsoft.Purview/accounts' -o json 2>$null | ConvertFrom-Json
+    }
+    $pvExists = ($pvAccounts -and $pvAccounts.Count -ge 1)
+    $pv = if ($pvExists) { $pvAccounts | Select-Object -First 1 } else { $null }
+    Add-Prereq `
+        $pvAcctLabel `
+        $pvExists `
+        $(if ($pvExists) { "found: $($pv.name) (RG=$($pv.resourceGroup))" } else { 'no Microsoft.Purview/accounts in subscription' }) `
+        "Create a Purview account in this subscription via the Azure portal (Create resource -> Microsoft Purview), then complete the Unified Catalog upgrade. The deploy will NOT create one for you."
+
+    if ($pvExists) {
+        $pvEndpoint = "https://$($pv.name).purview.azure.com"
+        $pvTok = az account get-access-token --resource https://purview.azure.net --query accessToken -o tsv 2>$null
+        $pvHdr = @{ Authorization = "Bearer $pvTok" }
+        $pvJsonHdr = $pvHdr.Clone()
+        $pvJsonHdr['Content-Type'] = 'application/json'
+
+        # Unified Catalog probe
+        $ucLabel = 'Purview Unified Catalog (new experience) enabled'
+        Start-Prereq $ucLabel
+        $ucOk = $false
+        try {
+            $null = Invoke-RestMethod -Method GET -Uri "$pvEndpoint/datagovernance/catalog/businessdomains" -Headers $pvHdr
+            $ucOk = $true
+        } catch {}
+        Add-Prereq `
+            $ucLabel `
+            $ucOk `
+            $(if ($ucOk) { 'businessdomains endpoint returns 200' } else { 'businessdomains endpoint not reachable; account on legacy data map only' }) `
+            "Open https://purview.microsoft.com, switch to the '$($pv.name)' account, and complete the 'Upgrade to the new Purview experience' flow."
+
+        # Collection Admin on root (PUT then DELETE a deploycheck collection).
+        # Purview collection names: 3-63 chars, alphanumeric + hyphen only (no underscores).
+        $collLabel = "Purview Collection Admin on root collection ($($pv.name))"
+        Start-Prereq $collLabel
+        $collOk = $false
+        $collErr = ''
+        $collName = 'deploycheck' + ([guid]::NewGuid().ToString('N').Substring(0,8))
+        try {
+            $putBody = '{"name":"' + $collName + '","friendlyName":"' + $collName + '","parentCollection":{"type":"CollectionReference","referenceName":"' + $pv.name + '"}}'
+            $null = Invoke-RestMethod -Method PUT -Uri "$pvEndpoint/account/collections/$collName`?api-version=2019-11-01-preview" -Headers $pvJsonHdr -Body $putBody
+            $collOk = $true
+        } catch {
+            $collErr = $_.Exception.Message
+        }
+        if ($collOk) {
+            try { Invoke-RestMethod -Method DELETE -Uri "$pvEndpoint/account/collections/$collName`?api-version=2019-11-01-preview" -Headers $pvHdr | Out-Null } catch {}
+        }
+        Add-Prereq `
+            $collLabel `
+            $collOk `
+            $(if ($collOk) { 'created + deleted test collection successfully' } else { "create test collection failed: $collErr" }) `
+            "Open the Purview governance portal -> Data Map -> Collections -> root '$($pv.name)' -> Role assignments. Add your account as 'Collection admins'."
+
+        # Domain Admin (POST then DELETE a deploycheck businessdomain)
+        $domLabel = 'Purview Data Catalog Admin (create + delete business domains)'
+        Start-Prereq $domLabel
+        $domOk = $false
+        $domErr = ''
+        $domName = 'deploycheck-' + ([guid]::NewGuid().ToString('N').Substring(0,8))
+        try {
+            $domBody = '{"name":"' + $domName + '","type":"DataDomain","description":"preflight test","status":"Draft"}'
+            $domResp = Invoke-RestMethod -Method POST -Uri "$pvEndpoint/datagovernance/catalog/businessdomains" -Headers $pvJsonHdr -Body $domBody
+            $domOk = $true
+            if ($domResp.id) {
+                try { Invoke-RestMethod -Method DELETE -Uri "$pvEndpoint/datagovernance/catalog/businessdomains/$($domResp.id)" -Headers $pvHdr | Out-Null } catch {}
+            }
+        } catch {
+            $domErr = $_.Exception.Message
+        }
+        Add-Prereq `
+            $domLabel `
+            $domOk `
+            $(if ($domOk) { 'created + deleted test domain successfully' } else { "create test domain failed: $domErr" }) `
+            "In the Purview governance portal -> Settings -> Roles and permissions, add your account to the 'Data Governance Administrator' role at the root domain."
+    }
+}
+
+# --- Render checklist + abort on any failure ---
+Write-Host ''
+$failedPrereqs = @($prereqs | Where-Object { -not $_.Ok })
+if ($failedPrereqs.Count -gt 0) {
+    Write-Host ''
+    Write-Host "Preflight FAILED -- $($failedPrereqs.Count) prerequisite(s) not met. Nothing has been created yet." -ForegroundColor Red
+    foreach ($f in $failedPrereqs) {
+        Write-Host ''
+        Write-Host "  X $($f.Label)" -ForegroundColor Red
+        Write-Host "    Fix: $($f.Remediation)" -ForegroundColor Yellow
+    }
+    Write-Host ''
+    Write-Host 'Resolve the above and re-run deploy.cmd.' -ForegroundColor Cyan
+    exit 1
+}
+Write-Ok "All prerequisites met"
 
 # Public IP for firewall
 try {
@@ -597,7 +1209,7 @@ if ($rgExists) {
 # Emit minimal teardown immediately. If deploy crashes from here on, the user
 # has a working teardown.cmd that deletes the RG. Overwritten with full version
 # after workspaces are created.
-Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -DeployedBy $selectedSub.user.name
 Write-Info "teardown.ps1 + teardown.cmd written (RG-only; refreshed after workspaces exist)"
 
 # -----------------------------------------------------------------------------
@@ -662,13 +1274,18 @@ Write-Info "Storage Acct:     $($outputs.storageAccount.value)"
 Write-Info "Fabric Capacity:  $fabricCapacityName"
 
 # Refresh teardown so the capacity gets named even if we crash before workspaces.
-Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -DeployedBy $selectedSub.user.name -Capacity $fabricCapacityName
 
 # -----------------------------------------------------------------------------
 # Fabric workspaces + bronze workspace identity (post-bicep now that capacity
 # lands in the same deploy).
 # -----------------------------------------------------------------------------
 . (Join-Path $PSScriptRoot 'scripts' 'Fabric.ps1')
+
+# Register tenant so Invoke-FabricRest can run 'az login --tenant <X>' on its
+# own if a 401 hits mid-deploy and the cached refresh token has also died.
+# Without this we'd abort the deploy and force the user to restart from zero.
+Set-FabricTenant -TenantId $selectedSub.tenantId
 
 Write-Step "Acquiring Fabric API token"
 $fabricToken = Get-FabricToken
@@ -702,10 +1319,11 @@ Write-Step "Creating Fabric workspaces (bronze/silver/gold in parallel)"
 $wsJobs = foreach ($ws in $workspaceNames) {
     $wsName = "cts-rtl-$($ws.Suffix)-$uniqueSuffix"
     Start-ThreadJob -ScriptBlock {
-        param($tok, $capId, $name, $desc, $fabricPs1)
+        param($tok, $capId, $name, $desc, $fabricPs1, $tid)
         . $fabricPs1
+        Set-FabricTenant -TenantId $tid
         New-FabricWorkspace -Token $tok -Name $name -CapacityId $capId -Description $desc
-    } -ArgumentList $fabricToken, $capacityId, $wsName, $ws.Description, (Join-Path (Join-Path $PSScriptRoot 'scripts') 'Fabric.ps1') -Name "ws-$($ws.Suffix)"
+    } -ArgumentList $fabricToken, $capacityId, $wsName, $ws.Description, (Join-Path (Join-Path $PSScriptRoot 'scripts') 'Fabric.ps1'), $selectedSub.tenantId -Name "ws-$($ws.Suffix)"
 }
 $wsJobs | Wait-Job | Out-Null
 for ($i = 0; $i -lt $workspaceNames.Count; $i++) {
@@ -734,7 +1352,7 @@ Write-Ok "  silver/shared    = $($silverFolders['shared'])"
 
 # Refresh teardown with workspace IDs so a mid-deploy crash from here on
 # tears down workspaces AND the RG (workspaces are tenant-scoped, not in RG).
-Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName -Workspaces $workspaces.Values
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -DeployedBy $selectedSub.user.name -Capacity $fabricCapacityName -Workspaces $workspaces.Values
 Write-Info "teardown.ps1 refreshed with 3 workspace IDs"
 
 # Provision bronze workspace identity. Used by KQL ingest grant, Fabric SQL
@@ -776,8 +1394,8 @@ Write-Ok "  bronze lakehouse id=$($bronzeLh.id)"
 # the seed run. Fire as ThreadJob -- the submit takes ~18s round-trip and
 # nothing between here and ADLS shortcut create needs the role.
 Write-Step "Granting workspace identity 'Storage Blob Data Reader' on storage account (background)"
-$storageId = az storage account show --name $outputs.storageAccount.value --resource-group $config.RESOURCE_GROUP --query id -o tsv
-if ($LASTEXITCODE -ne 0 -or -not $storageId) { throw "Failed to resolve storage account resource id" }
+$storageId = Invoke-AzWithRetry -Label 'az storage account show' { az storage account show --name $outputs.storageAccount.value --resource-group $config.RESOURCE_GROUP --query id -o tsv }
+if (-not $storageId) { throw "Failed to resolve storage account resource id" }
 $blobReaderJob = Start-ThreadJob -Name 'storage-blob-reader-grant' -ScriptBlock {
     param($spId, $scope)
     az role assignment create `
@@ -834,8 +1452,8 @@ $wsOid  = $wsIdentity.servicePrincipalId
 # single Invoke-Sqlcmd grants both principals in one trip.
 Write-Step "Creating service principal for Fabric gateway connection"
 $spName = "sp-fabric-mirror-$($outputs.uniqueSuffix.value)"
-$spJson = az ad sp create-for-rbac --display-name $spName --years 1 --role Reader --scopes "/subscriptions/$($selectedSub.id)" -o json 2>$null
-if ($LASTEXITCODE -ne 0 -or -not $spJson) { throw "az ad sp create-for-rbac failed for $spName" }
+$spJson = Invoke-AzWithRetry -Label 'az ad sp create-for-rbac' { az ad sp create-for-rbac --display-name $spName --years 1 --role Reader --scopes "/subscriptions/$($selectedSub.id)" -o json 2>$null }
+if (-not $spJson) { throw "az ad sp create-for-rbac failed for $spName" }
 $sp = $spJson | ConvertFrom-Json
 $spAppId  = $sp.appId
 $spSecret = $sp.password
@@ -843,7 +1461,7 @@ $spSecret = $sp.password
 $spOid = $null
 $spOidDeadline = (Get-Date).AddSeconds(90)
 while ((Get-Date) -lt $spOidDeadline) {
-    $spOid = az ad sp show --id $spAppId --query id -o tsv 2>$null
+    $spOid = Invoke-AzWithRetry -Label 'az ad sp show' -AllowNonZeroExit { az ad sp show --id $spAppId --query id -o tsv 2>$null }
     if ($spOid) { break }
     Start-Sleep -Seconds 5
 }
@@ -851,7 +1469,7 @@ if (-not $spOid) { throw "Could not resolve objectId for SP appId=$spAppId after
 Write-Ok "  SP $spName created (appId=$spAppId, oid=$spOid)"
 
 # Persist SP appId in teardown so it can be deleted on tear-down.
-Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -DeployedBy $selectedSub.user.name -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId
 
 $ctSql = @"
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'$wsName')
@@ -881,7 +1499,7 @@ END
 CLOSE c; DEALLOCATE c;
 "@
 
-$ctDeadline = (Get-Date).AddSeconds(300)
+$ctDeadline = (Get-Date).AddSeconds(600)
 while ($true) {
     try {
         Invoke-Sqlcmd `
@@ -893,8 +1511,8 @@ while ($true) {
             -ErrorAction Stop
         break
     } catch {
-        if ($_.Exception.Message -match 'Principal .* could not be (resolved|found)|not found in the directory' -and (Get-Date) -lt $ctDeadline) {
-            Write-Info "  workspace identity not yet visible in Entra; retrying in 15s..."
+        if ($_.Exception.Message -match 'Principal .* could not be (resolved|found)|not found in the directory|is not a valid object id|Msg 37545' -and (Get-Date) -lt $ctDeadline) {
+            Write-Info "  workspace identity / SP not yet visible in Entra; retrying in 15s..."
             Start-Sleep -Seconds 15
             continue
         }
@@ -921,7 +1539,7 @@ $gateway = New-FabricVNetGateway `
 Write-Ok "  gateway id=$($gateway.id)"
 
 # Persist gateway id for teardown immediately after create (so a crash mid-deploy still cleans up).
-Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -DeployedBy $selectedSub.user.name -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id
 
 Write-Step "Creating gateway-bound SQL connection (SP auth)"
 $conn = New-FabricSqlGatewayConnection `
@@ -935,7 +1553,7 @@ $conn = New-FabricSqlGatewayConnection `
     -ServicePrincipalSecret $spSecret
 Write-Ok "  connection id=$($conn.id)"
 
-Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id -ConnectionIds @($conn.id)
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -DeployedBy $selectedSub.user.name -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id -ConnectionIds @($conn.id)
 
 # Mirror requires the Azure SQL logical server's system-assigned managed
 # identity (SAMI) to have write access on the mirror item so the snapshot
@@ -944,7 +1562,7 @@ Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selected
 # forever, status="Running", no error. Adding the SAMI as a workspace
 # Contributor covers all current and future mirror items in the workspace.
 Write-Step "Granting Azure SQL server SAMI Contributor on bronze workspace (required for mirroring)"
-$sqlSamiPid = az sql server show -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --query identity.principalId -o tsv
+$sqlSamiPid = Invoke-AzWithRetry -Label 'az sql server show (SAMI pid)' { az sql server show -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --query identity.principalId -o tsv }
 if (-not $sqlSamiPid) { throw "Azure SQL server has no system-assigned managed identity" }
 Add-FabricWorkspaceRoleAssignment `
     -Token $fabricToken `
@@ -967,12 +1585,13 @@ Write-Ok "  granted Contributor to SQL SAMI $sqlSamiPid (propagating during seed
 # before disabling SQL public network access.
 # -----------------------------------------------------------------------------
 Write-Step "Starting workspace Managed Private Endpoint create to SQL (background; ~4 min)"
-$sqlServerResId = az sql server show -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --query id -o tsv
+$sqlServerResId = Invoke-AzWithRetry -Label 'az sql server show (resId)' { az sql server show -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --query id -o tsv }
 $mpeName = "mpe-sql-$($outputs.uniqueSuffix.value)"
 $fabricPs1Path = Join-Path (Join-Path $PSScriptRoot 'scripts') 'Fabric.ps1'
 $mpeJob = Start-ThreadJob -Name 'mpe-create' -ScriptBlock {
-    param($tok, $wsId, $name, $resId, $fabricPs1)
+    param($tok, $wsId, $name, $resId, $fabricPs1, $tid)
     . $fabricPs1
+    Set-FabricTenant -TenantId $tid
     New-FabricWorkspaceManagedPrivateEndpoint `
         -Token $tok `
         -WorkspaceId $wsId `
@@ -980,7 +1599,7 @@ $mpeJob = Start-ThreadJob -Name 'mpe-create' -ScriptBlock {
         -TargetResourceId $resId `
         -TargetSubresourceType 'sqlServer' `
         -RequestMessage 'Auto-approved by contoso deploy.ps1'
-} -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $mpeName, $sqlServerResId, $fabricPs1Path
+} -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $mpeName, $sqlServerResId, $fabricPs1Path, $selectedSub.tenantId
 Write-Ok "  MPE create job started ($mpeName)"
 
 # -----------------------------------------------------------------------------
@@ -1000,9 +1619,8 @@ if ($mpeState -ne 'Completed' -or -not $mpe) { throw "MPE create job ended in st
 Write-Ok "  MPE $mpeName Approved + Succeeded (id=$($mpe.id))"
 
 Write-Step "Disabling SQL publicNetworkAccess (zero-touch network path from here on)"
-az sql server update -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --set publicNetworkAccess=Disabled --output none
-if ($LASTEXITCODE -ne 0) { throw "Failed to disable publicNetworkAccess on $($outputs.sqlServerName.value)" }
-az sql server firewall-rule delete -g $config.RESOURCE_GROUP -s $outputs.sqlServerName.value -n AllowDeployerClient --yes 2>$null | Out-Null
+Invoke-AzWithRetry -Label 'az sql server update (PNA=Disabled)' { az sql server update -g $config.RESOURCE_GROUP -n $outputs.sqlServerName.value --set publicNetworkAccess=Disabled --output none } | Out-Null
+Invoke-AzWithRetry -Label 'az sql firewall-rule delete (AllowDeployerClient)' -AllowNonZeroExit { az sql server firewall-rule delete -g $config.RESOURCE_GROUP -s $outputs.sqlServerName.value -n AllowDeployerClient --yes 2>$null } | Out-Null
 Write-Ok "  publicNetworkAccess=Disabled"
 
 # -----------------------------------------------------------------------------
@@ -1019,8 +1637,9 @@ Write-Ok "  publicNetworkAccess=Disabled"
 $fabricPs1Path = Join-Path (Join-Path $PSScriptRoot 'scripts') 'Fabric.ps1'
 
 $bakeAndUpload = {
-    param($tok, $wsId, $name, $srcPath, $replacements, $fabricPs1, $folderId)
+    param($tok, $wsId, $name, $srcPath, $replacements, $fabricPs1, $folderId, $tid)
     . $fabricPs1
+    Set-FabricTenant -TenantId $tid
     $src = Get-Content -Raw -Path $srcPath
     foreach ($k in $replacements.Keys) { $src = $src.Replace($k, $replacements[$k]) }
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "$name.baked.$([guid]::NewGuid()).ipynb"
@@ -1064,7 +1683,7 @@ $seedJobUpload = Start-ThreadJob -Name 'nb-upload-seed' -ScriptBlock $bakeAndUpl
         'bronze_lakehouse_id = \"\"'           = "bronze_lakehouse_id = \`"$($bronzeLh.id)\`""
         'silver_curated_workspace_id = \"\"'   = "silver_curated_workspace_id = \`"$($workspaces['2-silver'].id)\`""
         'silver_curated_lakehouse_id = \"\"'   = "silver_curated_lakehouse_id = \`"$($silverCuratedLh.id)\`""
-    }, $fabricPs1Path, $bronzeFolders['seed']
+    }, $fabricPs1Path, $bronzeFolders['seed'], $selectedSub.tenantId
 
 $simJobUpload = Start-ThreadJob -Name 'nb-upload-sim' -ScriptBlock $bakeAndUpload -ArgumentList `
     $fabricToken, $workspaces['1-bronze'].id, '10_simulate_incremental_activity', $simNbPath, @{
@@ -1072,13 +1691,13 @@ $simJobUpload = Start-ThreadJob -Name 'nb-upload-sim' -ScriptBlock $bakeAndUploa
         'sql_database_name = \"contoso_retail\"' = "sql_database_name = \`"$($outputs.sqlDatabaseName.value)\`""
         'subscription_id   = \"\"'             = "subscription_id   = \`"$($selectedSub.id)\`""
         'resource_group    = \"\"'             = "resource_group    = \`"$($config.RESOURCE_GROUP)\`""
-    }, $fabricPs1Path, $bronzeFolders['incremental_load']
+    }, $fabricPs1Path, $bronzeFolders['incremental_load'], $selectedSub.tenantId
 
 $wxJobUpload = Start-ThreadJob -Name 'nb-upload-weather' -ScriptBlock $bakeAndUpload -ArgumentList `
     $fabricToken, $workspaces['1-bronze'].id, 'ingest_weather', $wxNbPath, @{
         'workspace_id = \"\"' = "workspace_id = \`"$($workspaces['1-bronze'].id)\`""
         'lakehouse_id = \"\"' = "lakehouse_id = \`"$($bronzeLh.id)\`""
-    }, $fabricPs1Path, $bronzeFolders['ingest']
+    }, $fabricPs1Path, $bronzeFolders['ingest'], $selectedSub.tenantId
 
 @($seedJobUpload, $simJobUpload, $wxJobUpload) | Wait-Job | Out-Null
 $seedNb = Receive-Job -Job $seedJobUpload; Remove-Job -Job $seedJobUpload
@@ -1264,6 +1883,22 @@ $eventstreamConnStr = Get-FabricEventstreamSourceConnectionString `
     -SourceId $es.sourceId
 Write-Ok "  source conn string retrieved ($($eventstreamConnStr.Length) chars)"
 
+# Wire EVENTHUB_CONNECTION_STRING BEFORE OneDeploy. Setting it after the
+# deploy triggers a host restart that races the post-deploy
+# syncfunctiontriggers call: sync hits the host mid-restart, registers 0
+# functions in the metadata blob, scale controller reads 0, host never
+# cold-starts, timer never fires, Clickstream stays empty. Set up front so
+# the post-deploy sync is the ONLY thing changing host state.
+Write-Step "Wiring EVENTHUB_CONNECTION_STRING into Function app settings (pre-deploy)"
+Invoke-AzWithRetry -Label 'az functionapp config appsettings set' {
+    az functionapp config appsettings set `
+        --name $outputs.functionAppName.value `
+        --resource-group $config.RESOURCE_GROUP `
+        --settings "EVENTHUB_CONNECTION_STRING=$eventstreamConnStr" `
+        --output none
+} | Out-Null
+Write-Ok "  EVENTHUB_CONNECTION_STRING set"
+
 # -----------------------------------------------------------------------------
 # 3-way parallel: seed notebook || backfill notebook || function deploy.
 # SQL DB is at GP_S_Gen5_8 (min 1.0) so seed has burst headroom; scale-down
@@ -1276,18 +1911,20 @@ $fabricPs1Path = Join-Path (Join-Path $PSScriptRoot 'scripts') 'Fabric.ps1'
 
 Write-Step "Starting seed notebook in background"
 $seedJob = Start-ThreadJob -Name 'seed-nb' -ScriptBlock {
-    param($tok, $wsId, $nbId, $fabricPs1)
+    param($tok, $wsId, $nbId, $fabricPs1, $tid)
     . $fabricPs1
+    Set-FabricTenant -TenantId $tid
     Invoke-FabricNotebook -Token $tok -WorkspaceId $wsId -NotebookId $nbId -TimeoutSeconds 3600 -PollSeconds 20
-} -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $seedNb.id, $fabricPs1Path
+} -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $seedNb.id, $fabricPs1Path, $selectedSub.tenantId
 Write-Ok "  seed job started"
 
 Write-Step "Starting clickstream backfill notebook in background (~2M events into KQL; usually 3-6 min, can spike to 15-20 min on Fabric Spark cold start)"
 $cbJob = Start-ThreadJob -Name 'backfill-nb' -ScriptBlock {
-    param($tok, $wsId, $nbId, $fabricPs1)
+    param($tok, $wsId, $nbId, $fabricPs1, $tid)
     . $fabricPs1
+    Set-FabricTenant -TenantId $tid
     Invoke-FabricNotebook -Token $tok -WorkspaceId $wsId -NotebookId $nbId -TimeoutSeconds 1800 -PollSeconds 20
-} -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $cbNb.id, $fabricPs1Path
+} -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $cbNb.id, $fabricPs1Path, $selectedSub.tenantId
 $cbStarted = Get-Date
 $cbNotebookId = $cbNb.id
 $cbWorkspaceId = $workspaces['1-bronze'].id
@@ -1341,19 +1978,24 @@ Write-Step "Kicking off SQL DB scale-down to idle-cheap SKU (GP_S_Gen5_4) -- fir
 # --no-wait: Azure scales the DB asynchronously; the deploy doesn't depend on
 # the new SKU being active to continue (seed already drained the burst headroom
 # we needed at Gen5_8). Saves ~50s of wall-clock.
-az sql db update `
-    --name $outputs.sqlDatabaseName.value `
-    --server $outputs.sqlServerName.value `
-    --resource-group $config.RESOURCE_GROUP `
-    --edition GeneralPurpose `
-    --family Gen5 `
-    --capacity 4 `
-    --min-capacity 0.5 `
-    --compute-model Serverless `
-    --no-wait `
-    --output none
-if ($LASTEXITCODE -ne 0) { Write-Info "  (non-fatal) SQL scale-down submit failed; please scale back manually" }
-else { Write-Ok "  scale-down submitted (will complete in background)" }
+try {
+    Invoke-AzWithRetry -Label 'az sql db update (scale-down)' {
+        az sql db update `
+            --name $outputs.sqlDatabaseName.value `
+            --server $outputs.sqlServerName.value `
+            --resource-group $config.RESOURCE_GROUP `
+            --edition GeneralPurpose `
+            --family Gen5 `
+            --capacity 4 `
+            --min-capacity 0.5 `
+            --compute-model Serverless `
+            --no-wait `
+            --output none
+    } | Out-Null
+    Write-Ok "  scale-down submitted (will complete in background)"
+} catch {
+    Write-Info "  (non-fatal) SQL scale-down submit failed; please scale back manually: $_"
+}
 
 # -----------------------------------------------------------------------------
 # SQL Mirror item + ADLS Shortcut (AFTER seed so initial snapshot is meaningful)
@@ -1369,10 +2011,11 @@ Write-Step "Kicking off Mirrored Database create in background (snapshot starts 
 # wait, eventhub wire, sync triggers, silver_raw lakehouse) need the mirror.
 # Run it in parallel; join right before we start polling for mirror tables.
 $mirrorJob = Start-ThreadJob -Name 'mirror-create' -ScriptBlock {
-    param($tok, $wsId, $connId, $fabricPs1)
+    param($tok, $wsId, $connId, $fabricPs1, $tid)
     . $fabricPs1
+    Set-FabricTenant -TenantId $tid
     New-FabricMirroredAzureSqlDatabase -Token $tok -WorkspaceId $wsId -Name 'contoso_retail_sql_mirror' -ConnectionId $connId
-} -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $conn.id, $fabricPs1Path
+} -ArgumentList $fabricToken, $workspaces['1-bronze'].id, $conn.id, $fabricPs1Path, $selectedSub.tenantId
 Write-Ok "  mirror create job started"
 
 Write-Step "Creating ADLS shortcut from bronze lakehouse Files/raw -> $($outputs.storageAccount.value)/raw"
@@ -1390,7 +2033,7 @@ $adlsConn = New-FabricAdlsGen2Connection `
     -WorkspaceId $workspaces['1-bronze'].id
 Write-Ok "  adls connection id=$($adlsConn.id)"
 
-Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id -ConnectionIds @($conn.id, $adlsConn.id)
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -DeployedBy $selectedSub.user.name -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id -ConnectionIds @($conn.id, $adlsConn.id)
 
 $shortcut = New-FabricAdlsShortcut `
     -Token $fabricToken `
@@ -1443,30 +2086,27 @@ Remove-Item $funcZip -ErrorAction SilentlyContinue
 if ($funcState -ne 'Completed') { throw "Function deploy thread job ended in state '$funcState'" }
 Write-Ok "  function deployed -> https://$($outputs.functionHostname.value)"
 
-# Push the Fabric Eventstream CustomEndpoint SAS conn string into the
-# Function app settings AFTER code deploy, so the runtime restart picks it
-# up cleanly. Setting it before deploy works too but a second restart is
-# wasteful.
-Write-Step "Wiring EVENTHUB_CONNECTION_STRING into Function app settings"
-az functionapp config appsettings set `
-    --name $outputs.functionAppName.value `
-    --resource-group $config.RESOURCE_GROUP `
-    --settings "EVENTHUB_CONNECTION_STRING=$eventstreamConnStr" `
-    --output none
-if ($LASTEXITCODE -ne 0) { throw "Failed to set EVENTHUB_CONNECTION_STRING on $($outputs.functionAppName.value)" }
-Write-Ok "  EVENTHUB_CONNECTION_STRING set (Function will restart and begin emitting)"
-
 # Flex Consumption does NOT auto-discover triggers in a freshly-uploaded
-# package after OneDeploy + restart -- the host scans wwwroot before the new
-# package is mounted and ends up with zero registered functions (timer never
-# fires, Clickstream stays empty). Forcing a syncfunctiontriggers makes the
-# host re-scan against the just-deployed package. Without this the function
-# app silently does nothing until manually kicked.
-Write-Step "Syncing function triggers (Flex Consumption requires explicit sync after OneDeploy)"
+# package: scale controller reads function metadata from a control-plane
+# blob, not the running host. syncfunctiontriggers writes that blob from
+# the deployed package. A single call can race the host (returns 200 but
+# registers 0 functions), so we sync-and-verify in a loop: call sync, poll
+# `functionapp function list` until non-empty, retry up to 5 times.
+# EVENTHUB_CONNECTION_STRING was already set pre-deploy so there's no
+# settings-change restart racing this loop.
+Write-Step "Syncing function triggers (Flex Consumption requires explicit sync + verify after OneDeploy)"
 $syncUri = "https://management.azure.com/subscriptions/$($selectedSub.id)/resourceGroups/$($config.RESOURCE_GROUP)/providers/Microsoft.Web/sites/$($outputs.functionAppName.value)/syncfunctiontriggers?api-version=2022-03-01"
-az rest --method post --uri $syncUri --output none
-if ($LASTEXITCODE -ne 0) { Write-Info "  syncfunctiontriggers returned non-zero (often benign; will retry once)"; Start-Sleep 10; az rest --method post --uri $syncUri --output none }
-Write-Ok "  triggers synced"
+$fnCount = 0
+for ($attempt = 1; $attempt -le 5; $attempt++) {
+    Invoke-AzWithRetry -Label "az rest syncfunctiontriggers (attempt $attempt)" { az rest --method post --uri $syncUri --output none } | Out-Null
+    Start-Sleep -Seconds 15
+    $fnList = az functionapp function list --name $outputs.functionAppName.value --resource-group $config.RESOURCE_GROUP --output json 2>$null | ConvertFrom-Json
+    $fnCount = if ($fnList) { @($fnList).Count } else { 0 }
+    Write-Info "  attempt $attempt -> $fnCount function(s) registered"
+    if ($fnCount -gt 0) { break }
+}
+if ($fnCount -eq 0) { throw "Function triggers never registered after 5 sync attempts -- emitter will not fire" }
+Write-Ok "  $fnCount trigger(s) registered"
 Write-Info "  emitter fires every 30s -> Fabric Eventstream '$($es.sourceName)' -> Eventhouse 'Clickstream' table"
 
 # -----------------------------------------------------------------------------
@@ -1487,10 +2127,11 @@ Write-Ok "  id=$($silverRawLh.id)"
 # (~1:46) + create shortcuts. Joined before banner.
 Write-Step "Starting gold warehouse create in background"
 $goldWhJob = Start-ThreadJob -Name 'gold-wh' -ScriptBlock {
-    param($tok, $wsId, $fabricPs1)
+    param($tok, $wsId, $fabricPs1, $tid)
     . $fabricPs1
+    Set-FabricTenant -TenantId $tid
     New-FabricWarehouse -Token $tok -WorkspaceId $wsId -Name 'contoso_retail_gold' -Description 'Contoso Retail gold star schema (dim_* / fact_*)'
-} -ArgumentList $fabricToken, $workspaces['3-gold'].id, $fabricPs1Path
+} -ArgumentList $fabricToken, $workspaces['3-gold'].id, $fabricPs1Path, $selectedSub.tenantId
 Write-Ok "  gold warehouse job started"
 
 # silver_raw shortcuts: pure-passthrough views of the bronze-side sources so
@@ -1794,7 +2435,7 @@ $goldWhConn = New-FabricSqlConnection `
     -WorkspaceId $workspaces['1-bronze'].id
 Write-Ok "  connection id=$($goldWhConn.id)"
 
-Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id -ConnectionIds @($conn.id, $adlsConn.id, $goldWhConn.id)
+Write-Teardown -Rg $config.RESOURCE_GROUP -Sub $selectedSub.id -Tenant $selectedSub.tenantId -DeployedBy $selectedSub.user.name -Capacity $fabricCapacityName -Workspaces $workspaces.Values -SpAppId $spAppId -GatewayId $gateway.id -ConnectionIds @($conn.id, $adlsConn.id, $goldWhConn.id)
 
 # -----------------------------------------------------------------------------
 # Silver curated notebooks. Read silver_raw shortcuts + Eventhouse Clickstream
@@ -1817,15 +2458,15 @@ $silverClickstreamParams = @{
     'silver_curated_lakehouse_id = \"\"' = "silver_curated_lakehouse_id = \`"$($silverCuratedLh.id)\`""
 }
 $silverRetailJob = Start-ThreadJob -Name 'nb-upload-silver-retail' -ScriptBlock $bakeAndUpload -ArgumentList `
-    $fabricToken, $silverWsId, 'silver_curated_retail_full', (Join-Path $silverNbDir 'silver_curated_retail_full.ipynb'), $silverParams, $fabricPs1Path, $silverFolders['full_load']
+    $fabricToken, $silverWsId, 'silver_curated_retail_full', (Join-Path $silverNbDir 'silver_curated_retail_full.ipynb'), $silverParams, $fabricPs1Path, $silverFolders['full_load'], $selectedSub.tenantId
 $silverWeatherJob = Start-ThreadJob -Name 'nb-upload-silver-weather' -ScriptBlock $bakeAndUpload -ArgumentList `
-    $fabricToken, $silverWsId, 'silver_curated_weather_full', (Join-Path $silverNbDir 'silver_curated_weather_full.ipynb'), $silverParams, $fabricPs1Path, $silverFolders['full_load']
+    $fabricToken, $silverWsId, 'silver_curated_weather_full', (Join-Path $silverNbDir 'silver_curated_weather_full.ipynb'), $silverParams, $fabricPs1Path, $silverFolders['full_load'], $selectedSub.tenantId
 $silverClickstreamJob = Start-ThreadJob -Name 'nb-upload-silver-clickstream' -ScriptBlock $bakeAndUpload -ArgumentList `
-    $fabricToken, $silverWsId, 'silver_curated_clickstream_full', (Join-Path $silverNbDir 'silver_curated_clickstream_full.ipynb'), $silverClickstreamParams, $fabricPs1Path, $silverFolders['full_load']
+    $fabricToken, $silverWsId, 'silver_curated_clickstream_full', (Join-Path $silverNbDir 'silver_curated_clickstream_full.ipynb'), $silverClickstreamParams, $fabricPs1Path, $silverFolders['full_load'], $selectedSub.tenantId
 $silverHrJob = Start-ThreadJob -Name 'nb-upload-silver-hr' -ScriptBlock $bakeAndUpload -ArgumentList `
-    $fabricToken, $silverWsId, 'silver_curated_hr_full', (Join-Path $silverNbDir 'silver_curated_hr_full.ipynb'), $silverParams, $fabricPs1Path, $silverFolders['full_load']
+    $fabricToken, $silverWsId, 'silver_curated_hr_full', (Join-Path $silverNbDir 'silver_curated_hr_full.ipynb'), $silverParams, $fabricPs1Path, $silverFolders['full_load'], $selectedSub.tenantId
 $silverOpsJob = Start-ThreadJob -Name 'nb-upload-silver-ops' -ScriptBlock $bakeAndUpload -ArgumentList `
-    $fabricToken, $silverWsId, 'silver_curated_ops_full', (Join-Path $silverNbDir 'silver_curated_ops_full.ipynb'), $silverParams, $fabricPs1Path, $silverFolders['full_load']
+    $fabricToken, $silverWsId, 'silver_curated_ops_full', (Join-Path $silverNbDir 'silver_curated_ops_full.ipynb'), $silverParams, $fabricPs1Path, $silverFolders['full_load'], $selectedSub.tenantId
 
 @($silverRetailJob, $silverWeatherJob, $silverClickstreamJob, $silverHrJob, $silverOpsJob) | Wait-Job | Out-Null
 $silverRetailNb      = Receive-Job -Job $silverRetailJob;      Remove-Job -Job $silverRetailJob
@@ -2047,7 +2688,7 @@ Write-Ok "  data agents deployed"
 # -----------------------------------------------------------------------------
 # Done (checkpoint 1: bronze-only, ready for manual silver/gold build-out)
 # -----------------------------------------------------------------------------
-Write-Done
+Write-Done -NoTotal
 Write-Host ""
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
@@ -2118,9 +2759,27 @@ Write-Host ""
 # -----------------------------------------------------------------------------
 # Auto-run pl_initial_load FIRST (if enabled) so the Next Steps banner can
 # point the user at live status + reports instead of "go run it yourself".
+#
+# When DEPLOY_PURVIEW=true, we then run Purview pre-data phases (collection,
+# RBAC, register sources, SQL+ADLS scans, domains, glossary, term rels, term
+# policies) in foreground while pl_initial_load runs in parallel. Once the
+# medallion finishes we poll-wait, then run the post-data phases (Fabric scan,
+# data products, OKRs, DP access policies, CDEs) which all need populated
+# Fabric assets.
 # -----------------------------------------------------------------------------
-$autoRun = ($config['AUTO_RUN_INITIAL_LOAD'] -eq 'true')
-$autoRunSubmitted = $false
+$autoRun       = ($config['AUTO_RUN_INITIAL_LOAD'] -eq 'true')
+$deployPurview = $deployPurviewPlanned
+
+# Purview Fabric scan can't run on empty lakehouses. Force auto-run if Purview
+# was requested but auto-run was not (web UI already enforces this; this is the
+# belt-and-suspenders for hand-edited deployment.config or stale packages).
+if ($deployPurview -and -not $autoRun) {
+    Write-Info "DEPLOY_PURVIEW=true forces AUTO_RUN_INITIAL_LOAD=true (Fabric scan needs populated lakehouses)"
+    $autoRun = $true
+}
+
+$autoRunSubmitted     = $false
+$pipelineJobStatusUri = $null
 $bronzeWsUrl  = "https://app.fabric.microsoft.com/groups/$($workspaces['1-bronze'].id)"
 $goldWsUrl    = "https://app.fabric.microsoft.com/groups/$($workspaces['3-gold'].id)"
 $pipelineUrl  = "https://app.fabric.microsoft.com/groups/$($workspaces['1-bronze'].id)/pipelines/$($fullPl.id)"
@@ -2130,11 +2789,11 @@ if ($autoRun) {
     Write-Step "Triggering pl_initial_load (id=$($fullPl.id)) -- AUTO_RUN_INITIAL_LOAD=true"
     try {
         $kickToken = Get-FabricToken
-        # Fire-and-forget: start the run, don't block the deploy script on
-        # completion (pl_initial_load takes 30-60 min and there's no reason
-        # to hold the terminal open for it).
-        Invoke-FabricRest -Token $kickToken -Method POST `
-            -Path "/workspaces/$($workspaces['1-bronze'].id)/items/$($fullPl.id)/jobs/instances?jobType=Pipeline" | Out-Null
+        # Capture the job-status URI from the Location header so we can poll
+        # later if DEPLOY_PURVIEW=true; otherwise it stays fire-and-forget.
+        $kick = Invoke-FabricRest -Token $kickToken -Method POST `
+            -Path "/workspaces/$($workspaces['1-bronze'].id)/items/$($fullPl.id)/jobs/instances?jobType=Pipeline"
+        $pipelineJobStatusUri = if ($kick.OperationLocation) { $kick.OperationLocation } else { $null }
         Write-Ok "pl_initial_load run submitted (runs ~30-60 min in the background)"
         $autoRunSubmitted = $true
     } catch {
@@ -2146,8 +2805,86 @@ if ($autoRun) {
 }
 Write-Host ""
 
+# Purview pre-data phases run NOW, in parallel with pl_initial_load. SQL/ADLS
+# data is already populated by the seed notebook, so 09's scans find their
+# source data even while the Fabric medallion is still building.
+if ($deployPurview) {
+    Write-Step "Purview governance -- pre-data phases (collection, RBAC, SQL+ADLS scans, domains, terms)"
+    try {
+        & (Join-Path $PSScriptRoot 'governance' 'purview' 'run-all.ps1') `
+            -ResourceGroup $config.RESOURCE_GROUP `
+            -Mode PreData
+        Write-Ok "Purview pre-data phases complete"
+    } catch {
+        Write-Host "Purview pre-data error (continuing): $_" -ForegroundColor DarkYellow
+    }
+    Write-Host ""
+}
+
+# Block on pl_initial_load completion before the Fabric scan (post-data phase
+# 10). The Fabric scan walks Fabric workspaces and surfaces lakehouse tables /
+# warehouse tables / semantic models as datamap entities; without a populated
+# medallion the scan returns mostly empty placeholders and phase 13/18 can't
+# wire their `fabric_*` and `powerbi_dataset` assets.
+if ($deployPurview -and $autoRunSubmitted -and $pipelineJobStatusUri) {
+    Write-Step "Waiting for pl_initial_load to finish before Fabric scan..."
+    $waitDeadline = (Get-Date).AddMinutes(90)
+    $lastStatus   = $null
+    while ((Get-Date) -lt $waitDeadline) {
+        try {
+            $waitToken = Get-FabricToken
+            $st = Invoke-FabricRest -Token $waitToken -Method GET -Path $pipelineJobStatusUri
+            $s  = $st.Body.status
+            if ($s -ne $lastStatus) {
+                Write-Host "  pl_initial_load status: $s" -ForegroundColor DarkGray
+                $lastStatus = $s
+            }
+            if ($s -in 'Completed','Succeeded') {
+                Write-Ok "pl_initial_load completed ($s)"
+                break
+            }
+            if ($s -in 'Failed','Cancelled','Deduped') {
+                Write-Host "  pl_initial_load ended with status '$s' -- running Fabric scan anyway (best-effort)" -ForegroundColor DarkYellow
+                break
+            }
+        } catch {
+            Write-Host "  poll error (will retry): $_" -ForegroundColor DarkYellow
+        }
+        Start-Sleep -Seconds 60
+    }
+    if ((Get-Date) -ge $waitDeadline) {
+        Write-Host "  pl_initial_load did not finish within 90 min -- proceeding with Fabric scan anyway (may find empty lakehouses)" -ForegroundColor DarkYellow
+    }
+    Write-Host ""
+}
+
+# Purview post-data phases: Fabric scan, data products (wires `fabric_*` and
+# `powerbi_dataset` assets surfaced by the Fabric scan), OKRs (link to DPs),
+# DP access policies (depend on DPs), CDEs + column links (walk scan columns).
+if ($deployPurview) {
+    Write-Step "Purview governance -- post-data phases (Fabric scan, data products, OKRs, DP policies, CDEs)"
+    try {
+        & (Join-Path $PSScriptRoot 'governance' 'purview' 'run-all.ps1') `
+            -ResourceGroup $config.RESOURCE_GROUP `
+            -Mode PostData
+        Write-Ok "Purview post-data phases complete"
+    } catch {
+        Write-Host "Purview post-data error (continuing): $_" -ForegroundColor DarkYellow
+    }
+    Write-Host ""
+}
+
 Write-Host "Next steps:" -ForegroundColor Gray
-if ($autoRunSubmitted) {
+if ($deployPurview -and $autoRunSubmitted) {
+    Write-Host "  - Your initial medallion load + Purview governance build are DONE (we waited for pl_initial_load before running the Fabric scan)." -ForegroundColor Gray
+    Write-Host "  - Open the GOLD workspace to find your reports + data agents:" -ForegroundColor Gray
+    Write-Host "      $goldWsUrl" -ForegroundColor Blue
+    Write-Host "      (Retail/ folder: Sales Overview, Operations Pulse. HR/ folder: Workforce, Attrition.)" -ForegroundColor DarkGray
+    Write-Host "  - Open Purview to explore the governance layer (collection, domains, glossary, data products, OKRs, CDEs):" -ForegroundColor Gray
+    Write-Host "      https://web.purview.azure.com/" -ForegroundColor Blue
+    Write-Host "  - Chat with the data agents for natural-language Q&A over the gold semantic models." -ForegroundColor Gray
+    Write-Host "  - Trigger pl_incremental_load any time to backfill from the last sync up to NOW (whether that's an hour or 5 months) and watch it propagate through the medallion." -ForegroundColor Gray
+} elseif ($autoRunSubmitted) {
     Write-Host "  - Your initial medallion load is RUNNING. Watch it in the Fabric Monitor hub:" -ForegroundColor Gray
     Write-Host "      $monitorUrl" -ForegroundColor Blue
     Write-Host "      (~30-60 min: bronze SQL mirror snapshot -> silver curated notebooks -> gold warehouse sprocs -> Direct Lake refresh)" -ForegroundColor DarkGray
@@ -2167,11 +2904,27 @@ Write-Host "  - PAUSE the Fabric capacity in the Azure portal when you're not ac
 Write-Host ""
 
 # -----------------------------------------------------------------------------
-# Teardown.ps1 / teardown.cmd were already emitted incrementally during deploy
-# (once after RG create, again after workspaces created). Nothing to do here.
+# teardown.ps1 + teardown.cmd were already emitted to the package folder
+# during deploy: teardown.cmd written once on the first Write-Teardown call
+# (right after RG create), teardown.ps1 refreshed on each call as more state
+# was created. Both live next to deploy.cmd. Nothing to do here.
 # -----------------------------------------------------------------------------
-Write-Host "teardown.ps1 + teardown.cmd are next to deploy.ps1 -- double-click teardown.cmd when ready to clean up." -ForegroundColor Cyan
+
+Write-Host "Teardown:" -ForegroundColor Cyan
+Write-Host "  Double-click teardown.cmd next to deploy.cmd when you're ready to tear it all down." -ForegroundColor Gray
 Write-Host ""
+
+# Final timing: flush the last step (Purview post-data) and print TOTAL runtime
+# now that Purview pre+post-data phases are done (Purview can add 20-30 min to
+# total deploy time, and the early TOTAL print before Purview underreported).
+Write-Done
+Write-Host ""
+
+# Stop the transcript explicitly so the log file handle is released before
+# pwsh exits (otherwise it stays locked briefly and blocks user deletion of
+# the package folder), then copy it out to %LOCALAPPDATA% for retention.
+Save-DeployState -Status 'completed'
+Complete-Log
 
 # Pause so the user sees the success message before the window closes.
 # (Most users launch via deploy.cmd which double-clicks shut on exit otherwise.)

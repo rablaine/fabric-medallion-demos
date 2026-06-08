@@ -15,6 +15,7 @@ async def generate_package(
     location: str = Form("centralus"),
     resource_prefix: str = Form("contoso"),
     auto_run_initial_load: str = Form(None),
+    deploy_purview: str = Form(None),
 ):
     """Generate a downloadable deployment package for the selected vertical."""
     registry = request.app.state.registry
@@ -22,13 +23,20 @@ async def generate_package(
     if not vertical:
         raise HTTPException(status_code=404, detail=f"Vertical '{vertical_id}' not found")
 
+    deploy_purview_flag = deploy_purview is not None
+    # Purview's Fabric scan needs populated lakehouses, so a Purview deploy
+    # implies the medallion load must run. Mirror the UI's forcing here so a
+    # form posted without JS still produces a coherent package.
+    auto_run_flag = (auto_run_initial_load is not None) or deploy_purview_flag
+
     builder = PackageBuilder(vertical=vertical)
     package_path = builder.build(
         config={
             "resource_group": resource_group,
             "location": location,
             "resource_prefix": resource_prefix,
-            "auto_run_initial_load": auto_run_initial_load is not None,
+            "auto_run_initial_load": auto_run_flag,
+            "deploy_purview": deploy_purview_flag,
         }
     )
     return FileResponse(
