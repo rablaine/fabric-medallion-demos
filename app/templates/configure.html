@@ -44,7 +44,7 @@
         <label class="checkbox-label">
             <input type="checkbox" name="deploy_purview" id="deploy_purview_cb" value="true">
             <span>Deploy Purview governance layer (catalog, domains, glossary, data products, OKRs, CDEs)</span>
-            <small>Requires an existing Purview account in the same subscription (upgraded to the new experience). Builds a per-deploy collection, scans SQL + ADLS + Fabric, defines two governance domains, glossary terms, data products, OKRs, access policies, and critical data elements. Forces auto-run of <code>pl_initial_load</code> &mdash; the Fabric scan needs populated lakehouses. Adds ~15&ndash;25 min after the medallion load finishes.</small>
+            <small>Requires an existing Purview account in the same subscription (upgraded to the new experience). Builds a per-deploy collection, scans SQL + ADLS + Fabric, defines two governance domains, glossary terms, data products, OKRs, access policies, and critical data elements. Forces auto-run of <code>pl_initial_load</code> &mdash; the Fabric scan needs populated lakehouses. Adds ~90 min after the medallion load finishes (most of that is the Fabric catalog scan).</small>
         </label>
 
         <div class="form-actions">
@@ -62,8 +62,8 @@
             and get a zip with your settings baked in. Inside the zip is
             <code>deploy.cmd</code>. Running it prompts for your Azure account +
             subscription, then deploys an end-to-end {{ vertical.name|lower }}
-            data estate in one shot (typically 25-40 minutes). Expand any step
-            below for the details.
+            data estate in one shot (~20 minutes; add ~90 min if you opted into
+            the Purview governance layer). Expand any step below for the details.
         </p>
 
         <details class="deploy-step">

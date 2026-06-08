@@ -125,6 +125,10 @@ $goldWarehouseId     = Get-WsItemId -Workspaces $ctx.retail.workspaces -Workspac
 $kqlDbId             = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'bronze' -ItemDisplayName 'contoso_retail_events'         -ItemTypes 'KQLDatabase'
 $retailSemModelId    = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'gold'   -ItemDisplayName 'Retail Sales'                  -ItemTypes 'SemanticModel'
 $hrSemModelId        = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'gold'   -ItemDisplayName 'HR & Workforce'                -ItemTypes 'SemanticModel'
+$rptSalesOverviewId  = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'gold'   -ItemDisplayName 'Retail - Sales Overview'       -ItemTypes 'Report'
+$rptSalesOpsId       = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'gold'   -ItemDisplayName 'Retail - Operations'           -ItemTypes 'Report'
+$rptHrWorkforceId    = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'gold'   -ItemDisplayName 'HR - Workforce Overview'       -ItemTypes 'Report'
+$rptHrAttritionId    = Get-WsItemId -Workspaces $ctx.retail.workspaces -WorkspaceDisplayMatch 'gold'   -ItemDisplayName 'HR - Attrition & Tenure'       -ItemTypes 'Report'
 
 # Build the asset list for a product, filtering out any nulls (so a missing
 # item just drops that asset link rather than throwing).
@@ -142,6 +146,7 @@ $products = @(
     BusinessUse = 'Daily, weekly, and monthly revenue reporting. Store-level performance comparisons. Promo lift analysis. Returns rate tracking. Used by Finance, Merchandising, and Store Ops teams.'
     Assets = New-AssetList @(
       @{ qn = $(if ($retailSemModelId)  { "https://app.powerbi.com/groups/$goldWs/datasets/$retailSemModelId" });          type = 'powerbi_dataset' }
+      @{ qn = $(if ($rptSalesOverviewId){ "https://app.powerbi.com/groups/$goldWs/reports/$rptSalesOverviewId" });         type = 'powerbi_report' }
       @{ qn = $(if ($goldWarehouseId)   { "https://app.fabric.microsoft.com/groups/$goldWs/datawarehouses/$goldWarehouseId" }); type = 'fabric_data_warehouse' }
       @{ qn = "mssql://$sqlFqdn/contoso_retail/retail/orders";       type = 'azure_sql_table' }
     )
@@ -154,6 +159,8 @@ $products = @(
     BusinessUse = 'Customer segmentation, lifetime value modeling, churn prediction, and personalized marketing. Used by Marketing, CRM, and Data Science teams.'
     Assets = New-AssetList @(
       @{ qn = $(if ($silverCuratedLhId) { "https://app.fabric.microsoft.com/groups/$silverWs/lakewarehouses/$silverCuratedLhId" }); type = 'fabric_lake_warehouse' }
+      @{ qn = $(if ($retailSemModelId)  { "https://app.powerbi.com/groups/$goldWs/datasets/$retailSemModelId" });          type = 'powerbi_dataset' }
+      @{ qn = $(if ($rptSalesOverviewId){ "https://app.powerbi.com/groups/$goldWs/reports/$rptSalesOverviewId" });         type = 'powerbi_report' }
       @{ qn = "mssql://$sqlFqdn/contoso_retail/retail/orders";       type = 'azure_sql_table' }
     )
     Terms = @('Customer','Sale')
@@ -166,6 +173,7 @@ $products = @(
     Assets = New-AssetList @(
       @{ qn = $(if ($bronzeLakehouseId) { "https://app.fabric.microsoft.com/groups/$bronzeWs/lakewarehouses/$bronzeLakehouseId" }); type = 'fabric_lake_warehouse' }
       @{ qn = $(if ($kqlDbId)           { "https://app.fabric.microsoft.com/groups/$bronzeWs/databases/$kqlDbId" });                type = 'fabric_kusto_database' }
+      @{ qn = $(if ($rptSalesOpsId)     { "https://app.powerbi.com/groups/$goldWs/reports/$rptSalesOpsId" });                       type = 'powerbi_report' }
       @{ qn = "mssql://$sqlFqdn/contoso_retail/retail/products";    type = 'azure_sql_table' }
       @{ qn = "mssql://$sqlFqdn/contoso_retail/retail/suppliers";   type = 'azure_sql_table' }
     )
@@ -177,7 +185,9 @@ $products = @(
     Description = 'Employee headcount, tenure, attrition, and labor cost per store. Sourced from the HR ledger and the silver-curated workforce dataset. Refreshes daily.'
     BusinessUse = 'Workforce planning, attrition coaching, labor budget vs actual, manager performance reviews. Used by HR Business Partners and Store Operations leadership.'
     Assets = New-AssetList @(
-      @{ qn = $(if ($hrSemModelId) { "https://app.powerbi.com/groups/$goldWs/datasets/$hrSemModelId" }); type = 'powerbi_dataset' }
+      @{ qn = $(if ($hrSemModelId)      { "https://app.powerbi.com/groups/$goldWs/datasets/$hrSemModelId" });              type = 'powerbi_dataset' }
+      @{ qn = $(if ($rptHrWorkforceId)  { "https://app.powerbi.com/groups/$goldWs/reports/$rptHrWorkforceId" });           type = 'powerbi_report' }
+      @{ qn = $(if ($rptHrAttritionId)  { "https://app.powerbi.com/groups/$goldWs/reports/$rptHrAttritionId" });           type = 'powerbi_report' }
     )
     Terms = @('Employee','Tenure','Attrition')
   }

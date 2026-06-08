@@ -1499,7 +1499,7 @@ END
 CLOSE c; DEALLOCATE c;
 "@
 
-$ctDeadline = (Get-Date).AddSeconds(300)
+$ctDeadline = (Get-Date).AddSeconds(600)
 while ($true) {
     try {
         Invoke-Sqlcmd `
@@ -1511,8 +1511,8 @@ while ($true) {
             -ErrorAction Stop
         break
     } catch {
-        if ($_.Exception.Message -match 'Principal .* could not be (resolved|found)|not found in the directory' -and (Get-Date) -lt $ctDeadline) {
-            Write-Info "  workspace identity not yet visible in Entra; retrying in 15s..."
+        if ($_.Exception.Message -match 'Principal .* could not be (resolved|found)|not found in the directory|is not a valid object id|Msg 37545' -and (Get-Date) -lt $ctDeadline) {
+            Write-Info "  workspace identity / SP not yet visible in Entra; retrying in 15s..."
             Start-Sleep -Seconds 15
             continue
         }

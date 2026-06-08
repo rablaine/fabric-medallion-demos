@@ -7,7 +7,7 @@
 ![Medallion](https://img.shields.io/badge/Architecture-Medallion-CD7F32)
 ![License: MIT](https://img.shields.io/badge/License-MIT-50fa7b)
 
-A web app that hands you a one-shot, end-to-end Microsoft Fabric data estate for a fictional company. Pick an industry, configure a few options, download a zip, run `deploy.cmd`. ~25-40 minutes later you have a fully populated bronze / silver / gold medallion in your own Azure subscription with semantic models, Power BI reports, and natural-language data agents on top.
+A web app that hands you a one-shot, end-to-end Microsoft Fabric data estate for a fictional company. Pick an industry, configure a few options, download a zip, run `deploy.cmd`. ~20 minutes later (plus ~90 min if you also opt into the Purview governance layer) you have a fully populated bronze / silver / gold medallion in your own Azure subscription with semantic models, Power BI reports, and natural-language data agents on top.
 
 ## What gets deployed (Retail vertical)
 
@@ -48,7 +48,7 @@ See [docs/medallion-architecture.md](docs/medallion-architecture.md) for the ful
 4. You unzip and run `deploy.cmd`. It does `az login`, then deploys Azure infra, creates a service principal for Fabric→SQL mirroring, stands up the VNet Data Gateway + Managed Private Endpoint, builds all three Fabric workspaces, deploys the Function, and (optionally) kicks off `pl_initial_load`.
 5. When you're done, `teardown.cmd` reverses everything. The gateway subnet's PowerPlatform service association sometimes takes ~1hr to release, so you may need to re-run `az group delete` once.
 
-Estimated wall-clock for the full Retail deploy: **25-40 minutes** depending on region and Fabric capacity provisioning.
+Estimated wall-clock for the full Retail deploy: **~20 minutes** for the Azure + Fabric medallion, plus **~90 additional minutes** if you opt into the Purview governance layer (catalog scans + UC entities + lineage).
 
 ## Realistic cost
 
