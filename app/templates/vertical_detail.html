@@ -24,8 +24,10 @@
         {% endfor %}
     </ul>
 
-    {% if vertical.status == "available" or vertical.status == "in-progress" %}
+    {% if (vertical.status == "available" or vertical.status == "in-progress") and vertical.deployable %}
     <a href="/verticals/{{ vertical.id }}/configure" class="cta-button">Configure Deployment &rarr;</a>
+    {% elif not vertical.deployable %}
+    <p class="preview-note">{{ vertical.preview_note or "This vertical is a preview. Deployment isn't available yet." }}</p>
     {% else %}
     <p><em>This vertical is planned but not yet built.</em></p>
     {% endif %}

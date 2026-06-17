@@ -36,16 +36,15 @@ app.include_router(deployment.router)
 async def home(request: Request):
     """Landing page.
 
-    When only one deployable vertical exists, render it directly (no picker).
-    Otherwise render the vertical grid.
+    When only one vertical exists at all, render it directly (no picker).
+    Otherwise render the vertical grid so every vertical is visible side by side.
     """
     verticals_list = registry.list_verticals()
-    deployable = [v for v in verticals_list if v.status in ("available", "in-progress")]
-    if len(deployable) == 1:
+    if len(verticals_list) == 1:
         return templates.TemplateResponse(
             request,
             "vertical_detail.html",
-            {"vertical": deployable[0], "single_vertical": True},
+            {"vertical": verticals_list[0], "single_vertical": True},
         )
     return templates.TemplateResponse(
         request,

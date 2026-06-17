@@ -49,3 +49,6 @@ verticals/*/logs/
 
 # Local scratch / experiments
 .scratch/
+
+# Local telemetry JSONL backstop (App Insights is the durable store)
+/data/telemetry.jsonl

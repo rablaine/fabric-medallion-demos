@@ -32,6 +32,11 @@ async def configure_vertical(request: Request, vertical_id: str):
     vertical = registry.get(vertical_id)
     if not vertical:
         raise HTTPException(status_code=404, detail=f"Vertical '{vertical_id}' not found")
+    if not vertical.deployable:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Vertical '{vertical_id}' is a preview and not deployable yet.",
+        )
     return templates.TemplateResponse(
         request,
         "configure.html",
