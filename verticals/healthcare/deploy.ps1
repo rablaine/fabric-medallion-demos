@@ -38,7 +38,10 @@ param(
     [string] $ImportContainer = "fhirimport",
     [string] $ExportContainer = "fhirexport",
     [string] $SeedDir         = (Join-Path $PSScriptRoot "data\fhir-seed"),
-    [switch] $SkipExport
+    [string] $FabricWorkspace = "cts-health-analytics",
+    [string] $FabricLocation  = "westus3",
+    [switch] $SkipExport,
+    [switch] $SkipFabric
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,6 +50,8 @@ Set-StrictMode -Version Latest
 $InfraDir     = Join-Path $PSScriptRoot "infra"
 $StorageBicep = Join-Path $InfraDir "storage.bicep"
 $FhirBicep    = Join-Path $InfraDir "fhir.bicep"
+$FabricBicep  = Join-Path $InfraDir "fabric.bicep"
+$FabricPs1    = Join-Path $PSScriptRoot "scripts\Fabric.ps1"
 
 # ---------------------------------------------------------------------------
 # Timing harness
@@ -144,15 +149,20 @@ Invoke-Phase "00 Preflight" {
     if ($LASTEXITCODE -ne 0) {
         az extension add -n healthcareapis -o none
     }
-    foreach ($ns in @("Microsoft.HealthcareApis", "Microsoft.Storage")) {
+    $providers = @("Microsoft.HealthcareApis", "Microsoft.Storage")
+    if (-not $SkipFabric) { $providers += "Microsoft.Fabric" }
+    foreach ($ns in $providers) {
         $state = az provider show --namespace $ns --query registrationState -o tsv
         if ($state -ne "Registered") {
             Write-Host "registering provider $ns ..."
             az provider register --namespace $ns --wait
         }
     }
-    $script:Me = az ad signed-in-user show --query id -o tsv
+    $script:Me     = az ad signed-in-user show --query id -o tsv
+    $script:MeUpn  = az ad signed-in-user show --query userPrincipalName -o tsv
+    $script:Tenant = $acct.tenant
     Write-Host "deployer objectId: $($script:Me)"
+    Write-Host "deployer UPN:      $($script:MeUpn)"
 }
 
 Invoke-Phase "01 Resource group" {
@@ -183,6 +193,27 @@ Invoke-Phase "03 Launch FHIR (bicep, async)" {
         --parameters resourcePrefix=$ResourcePrefix location=$Location deployerObjectId=$script:Me fhirServiceName=$FhirServiceName `
         -o none
     Write-Host "FHIR deployment '$($script:FhirDeployName)' launched (running in background)."
+}
+
+if (-not $SkipFabric) {
+    Invoke-Phase "03b Launch Fabric capacity (async)" {
+        # F2 capacity provisions in parallel with FHIR + seed upload. The
+        # analytics workspace is created post-deploy (phase 08) once the
+        # capacity is visible in the Fabric tenant - workspaces are a Fabric
+        # (not ARM) resource, so Bicep stops at the capacity.
+        #
+        # NOTE: $FabricLocation is deliberately separate from $Location. AHDS
+        # (FHIR) only exists in a few regions (southcentralus here), while
+        # Fabric capacity quota is granted per-region and may live elsewhere.
+        # A cross-region OneLake shortcut reads the FHIR $export fine, so the
+        # capacity goes wherever the subscription has Fabric quota.
+        $script:FabricDeployName = "contoso-health-fabric-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        az deployment group create --no-wait --name $script:FabricDeployName --resource-group $ResourceGroup `
+            --template-file $FabricBicep `
+            --parameters resourcePrefix=$ResourcePrefix location=$FabricLocation adminUserPrincipalName=$script:MeUpn `
+            -o none
+        Write-Host "Fabric capacity deployment '$($script:FabricDeployName)' launched (running in background)."
+    }
 }
 
 Invoke-Phase "04 Upload seed (parallel to FHIR)" {
@@ -315,8 +346,51 @@ if (-not $SkipExport) {
     }
 }
 
+if (-not $SkipFabric) {
+    Invoke-Phase "08 Fabric workspace" {
+        # Wait for the capacity deployment (usually done well before now since it
+        # launched in parallel with FHIR), then create the analytics workspace
+        # bound to it via the Fabric REST API.
+        while ($true) {
+            $state = az deployment group show -n $script:FabricDeployName -g $ResourceGroup --query properties.provisioningState -o tsv 2>$null
+            if ($state -eq "Succeeded") { break }
+            if ($state -eq "Failed" -or $state -eq "Canceled") { throw "Fabric capacity deployment $state" }
+            Write-Host "  ... Fabric capacity provisioning ($state)"
+            Start-Sleep -Seconds 15
+        }
+        $o = az deployment group show -n $script:FabricDeployName -g $ResourceGroup --query properties.outputs -o json | ConvertFrom-Json
+        $script:FabricCapacityName = $o.capacityName.value
+        Write-Host "Fabric capacity: $($script:FabricCapacityName)"
+
+        . $FabricPs1
+        Set-FabricTenant -TenantId $script:Tenant
+        $tok = Get-FabricToken
+
+        # Capacity may take a few seconds to surface in the Fabric tenant after ARM reports Succeeded.
+        $capGuid = $null
+        for ($i = 1; $i -le 12; $i++) {
+            try { $capGuid = Get-FabricCapacityGuid -Token $tok -CapacityName $script:FabricCapacityName; break }
+            catch {
+                if ($i -eq 12) { throw }
+                Write-Host "  capacity not visible in Fabric yet (attempt $i/12); waiting 10s..."
+                Start-Sleep -Seconds 10
+            }
+        }
+        Write-Host "Fabric capacity GUID: $capGuid"
+
+        $ws = New-FabricWorkspace -Token $tok -Name $FabricWorkspace -CapacityId $capGuid `
+            -Description "Contoso Healthcare - FHIR analytics (medallion over FHIR `$export)"
+        $script:FabricWorkspaceId = $ws.id
+        Write-Host "workspace: $($ws.displayName) (id=$($ws.id))"
+    }
+}
+
 Write-TimingSummary
 Write-Host ""
 Write-Host "FHIR endpoint: $($script:FhirUrl)" -ForegroundColor Green
 Write-Host "Storage:       $($script:StorageAccount)" -ForegroundColor Green
+if (-not $SkipFabric) {
+    Write-Host "Fabric cap.:   $($script:FabricCapacityName) (F2)" -ForegroundColor Green
+    Write-Host "Workspace:     $FabricWorkspace (id=$($script:FabricWorkspaceId))" -ForegroundColor Green
+}
 Write-Host "Done." -ForegroundColor Green
