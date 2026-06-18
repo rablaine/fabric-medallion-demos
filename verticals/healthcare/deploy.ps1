@@ -4,14 +4,21 @@
   and populates it from the baked-in synthetic seed via the bulk $import method.
 
 .DESCRIPTION
-  Validated, idempotent-ish provisioning of the Azure side of the healthcare
-  demo:
-    RG -> AHDS workspace -> FHIR R4 service -> ADLS Gen2 (+ import/export
-    containers) -> RBAC -> enable $import/$export -> upload seed -> $import ->
-    $export.
+  Infrastructure is provisioned with Bicep (infra/storage.bicep + infra/fhir.bicep);
+  data population uses server-side bulk $import (reads NDJSON from blob) instead
+  of per-resource REST PUT.
 
-  Population uses server-side bulk $import (reads NDJSON from blob) instead of
-  per-resource REST PUT — minutes instead of ~12 minutes for ~13k resources.
+  Ordering is tuned so the long pole (FHIR service create, ~6 min) runs in
+  parallel with everything it does not depend on:
+    1. storage.bicep (fast, synchronous) creates the ADLS account + containers.
+    2. fhir.bicep is launched with --no-wait (workspace + FHIR service, with
+       import/export + auth config baked in, plus both role assignments).
+    3. While FHIR provisions, the seed is uploaded to the storage account.
+    4. We wait for the FHIR deployment, then $import and $export.
+
+  Resource names use a uniqueString(resourceGroup().id) suffix (same pattern as
+  the retail vertical), so names are deterministic and globally unique without
+  any caller input.
 
   Every phase is wrapped in a stopwatch; a timing table is printed at the end and
   written to .\logs\deploy-timings-<timestamp>.json so deploy duration can be
@@ -26,18 +33,20 @@
 param(
     [string] $ResourceGroup   = "rg-contoso-health-poc",
     [string] $Location        = "southcentralus",
-    [string] $WorkspaceName   = "hdscontosohealth",      # alphanumeric only
+    [string] $ResourcePrefix  = "contoso",
     [string] $FhirServiceName = "fhirr4",
-    [string] $StorageAccount  = "stcontosohealthpoc",     # 3-24 lc alphanumeric, globally unique
     [string] $ImportContainer = "fhirimport",
     [string] $ExportContainer = "fhirexport",
     [string] $SeedDir         = (Join-Path $PSScriptRoot "data\fhir-seed"),
-    [int]    $RbacPropagationSeconds = 60,
     [switch] $SkipExport
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+$InfraDir     = Join-Path $PSScriptRoot "infra"
+$StorageBicep = Join-Path $InfraDir "storage.bicep"
+$FhirBicep    = Join-Path $InfraDir "fhir.bicep"
 
 # ---------------------------------------------------------------------------
 # Timing harness
@@ -72,6 +81,8 @@ function Write-TimingSummary {
             @{ N = "Pct"; E = { "{0,5:N1}%" -f (($_.Seconds / $total) * 100) } } |
         Format-Table -AutoSize | Out-Host
     Write-Host ("TOTAL: {0}s ({1:N1} min)" -f $total, ($total / 60)) -ForegroundColor Green
+    Write-Host "(phases overlap: FHIR provisions while the seed uploads, so the" -ForegroundColor DarkGray
+    Write-Host " sum of phase times exceeds wall-clock total.)" -ForegroundColor DarkGray
 
     $logDir = Join-Path $PSScriptRoot "logs"
     New-Item -ItemType Directory -Force -Path $logDir | Out-Null
@@ -88,12 +99,10 @@ function Write-TimingSummary {
 }
 
 # ---------------------------------------------------------------------------
-# Helpers
+# FHIR data-plane helpers (FhirUrl is known only after fhir.bicep finishes)
 # ---------------------------------------------------------------------------
-$FhirUrl = "https://$WorkspaceName-$FhirServiceName.fhir.azurehealthcareapis.com"
-
 function Get-FhirToken {
-    az account get-access-token --resource $FhirUrl --query accessToken -o tsv
+    az account get-access-token --resource $script:FhirUrl --query accessToken -o tsv
 }
 
 function Invoke-Fhir {
@@ -106,7 +115,7 @@ function Invoke-Fhir {
     )
     $headers = @{ Authorization = "Bearer $(Get-FhirToken)" }
     if ($ExtraHeaders) { $ExtraHeaders.GetEnumerator() | ForEach-Object { $headers[$_.Key] = $_.Value } }
-    $uri = "$FhirUrl$Path"
+    $uri = "$script:FhirUrl$Path"
     $args = @{ Uri = $uri; Headers = $headers; Method = $Method; SkipHttpErrorCheck = $true }
     if ($Body) { $args.Body = $Body; $headers["Content-Type"] = "application/fhir+json" }
     Invoke-WebRequest @args
@@ -123,8 +132,10 @@ function ConvertFrom-FhirContent {
 # ---------------------------------------------------------------------------
 # Phases
 # ---------------------------------------------------------------------------
-Write-Host "FHIR endpoint will be: $FhirUrl"
-if (-not (Test-Path $SeedDir)) { throw "Seed dir not found: $SeedDir" }
+Write-Host "Provisioning healthcare estate in '$ResourceGroup' ($Location)"
+if (-not (Test-Path $SeedDir))      { throw "Seed dir not found: $SeedDir" }
+if (-not (Test-Path $StorageBicep)) { throw "Missing $StorageBicep" }
+if (-not (Test-Path $FhirBicep))    { throw "Missing $FhirBicep" }
 
 Invoke-Phase "00 Preflight" {
     $acct = az account show --query "{sub:name, tenant:tenantId}" -o json | ConvertFrom-Json
@@ -148,76 +159,71 @@ Invoke-Phase "01 Resource group" {
     az group create -n $ResourceGroup -l $Location -o none
 }
 
-Invoke-Phase "02 AHDS workspace" {
-    az healthcareapis workspace create -g $ResourceGroup -n $WorkspaceName -l $Location -o none
+Invoke-Phase "02 Storage (bicep, sync)" {
+    $name = "contoso-health-storage-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    # Keep stdout (JSON) clean: let az warnings/errors flow to the console via
+    # stderr instead of merging them into the output we parse.
+    $out = az deployment group create --name $name --resource-group $ResourceGroup `
+        --template-file $StorageBicep `
+        --parameters resourcePrefix=$ResourcePrefix location=$Location deployerObjectId=$script:Me `
+        --query properties.outputs -o json
+    if ($LASTEXITCODE -ne 0) { throw "storage deploy failed (exit $LASTEXITCODE)" }
+    $o = ($out | Out-String | ConvertFrom-Json)
+    $script:StorageAccount = $o.storageAccountName.value
+    Write-Host "storage account: $($script:StorageAccount)"
 }
 
-Invoke-Phase "03 FHIR R4 service" {
-    $tenant = az account show --query tenantId -o tsv
-    az healthcareapis workspace fhir-service create `
-        -g $ResourceGroup --workspace-name $WorkspaceName --fhir-service-name $FhirServiceName `
-        --kind fhir-R4 -l $Location --identity-type SystemAssigned `
-        --authentication-configuration `
-            authority="https://login.microsoftonline.com/$tenant" `
-            audience="$FhirUrl" `
+Invoke-Phase "03 Launch FHIR (bicep, async)" {
+    # --no-wait returns immediately so the seed upload can overlap the ~6 min
+    # FHIR service create. Import/export + auth config are baked into the
+    # template, so there is no separate post-create config step.
+    $script:FhirDeployName = "contoso-health-fhir-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    az deployment group create --no-wait --name $script:FhirDeployName --resource-group $ResourceGroup `
+        --template-file $FhirBicep `
+        --parameters resourcePrefix=$ResourcePrefix location=$Location deployerObjectId=$script:Me fhirServiceName=$FhirServiceName `
         -o none
+    Write-Host "FHIR deployment '$($script:FhirDeployName)' launched (running in background)."
 }
 
-Invoke-Phase "04 FHIR RBAC (deployer)" {
-    $script:FhirId = az healthcareapis workspace fhir-service show `
-        -g $ResourceGroup --workspace-name $WorkspaceName --fhir-service-name $FhirServiceName --query id -o tsv
-    $script:FhirMsi = az healthcareapis workspace fhir-service show `
-        -g $ResourceGroup --workspace-name $WorkspaceName --fhir-service-name $FhirServiceName --query identity.principalId -o tsv
-    Write-Host "FHIR MSI principalId: $($script:FhirMsi)"
-    # Deployer needs data-plane access to kick off $import / $export.
-    az role assignment create --assignee $script:Me --role "FHIR Data Contributor" --scope $script:FhirId -o none
-}
-
-Invoke-Phase "05 Storage + containers" {
-    az storage account create -n $StorageAccount -g $ResourceGroup -l $Location `
-        --sku Standard_LRS --kind StorageV2 --enable-hierarchical-namespace true -o none
-    $script:StorageId = az storage account show -n $StorageAccount -g $ResourceGroup --query id -o tsv
-}
-
-Invoke-Phase "06 Storage RBAC (MSI + deployer)" {
-    # FHIR MSI reads import blobs / writes export blobs; deployer uploads the seed.
-    az role assignment create --assignee $script:FhirMsi --role "Storage Blob Data Contributor" --scope $script:StorageId -o none
-    az role assignment create --assignee $script:Me      --role "Storage Blob Data Contributor" --scope $script:StorageId -o none
-}
-
-Invoke-Phase "07 Enable import/export config" {
-    # No CLI flags; patch resource properties directly (shared-key auth may be
-    # disabled by policy, so $import/$export use the MSI + the integration store).
-    az resource update --ids $script:FhirId --api-version 2024-03-31 `
-        --set properties.exportConfiguration.storageAccountName=$StorageAccount `
-              properties.importConfiguration.integrationDataStore=$StorageAccount `
-              properties.importConfiguration.enabled=true `
-              properties.importConfiguration.initialImportMode=false `
-        -o none
-}
-
-Invoke-Phase "08 RBAC propagation wait" {
-    # Role assignments are eventually consistent; $import fails if the MSI can't
-    # yet read the blobs, or if the deployer's data-plane role hasn't landed.
-    Write-Host "waiting ${RbacPropagationSeconds}s for role assignments to propagate ..."
-    Start-Sleep -Seconds $RbacPropagationSeconds
-}
-
-Invoke-Phase "09 Create containers" {
-    # auth-mode login (shared key may be disabled). Idempotent.
-    az storage fs create -n $ImportContainer --account-name $StorageAccount --auth-mode login -o none 2>$null
-    az storage fs create -n $ExportContainer --account-name $StorageAccount --auth-mode login -o none 2>$null
-}
-
-Invoke-Phase "10 Upload seed to blob" {
-    az storage blob upload-batch --account-name $StorageAccount --auth-mode login `
-        -d $ImportContainer -s $SeedDir --pattern "*.ndjson" --overwrite -o none
-    $script:Blobs = az storage blob list --account-name $StorageAccount --auth-mode login -c $ImportContainer `
+Invoke-Phase "04 Upload seed (parallel to FHIR)" {
+    # Storage RBAC for the deployer was created in storage.bicep; retry to
+    # absorb role-assignment propagation lag. This whole phase overlaps the
+    # FHIR provision, so the retries are effectively free.
+    $uploaded = $false
+    for ($attempt = 1; $attempt -le 8; $attempt++) {
+        az storage blob upload-batch --account-name $script:StorageAccount --auth-mode login `
+            -d $ImportContainer -s $SeedDir --pattern "*.ndjson" --overwrite -o none 2>$null
+        if ($LASTEXITCODE -eq 0) { $uploaded = $true; break }
+        Write-Host "  upload attempt $attempt failed (RBAC propagating?), retrying in 15s ..."
+        Start-Sleep -Seconds 15
+    }
+    if (-not $uploaded) { throw "seed upload to blob failed after retries" }
+    $script:Blobs = az storage blob list --account-name $script:StorageAccount --auth-mode login -c $ImportContainer `
         --query "[].name" -o json | ConvertFrom-Json
     Write-Host "uploaded $($script:Blobs.Count) NDJSON files"
 }
 
-Invoke-Phase "11 FHIR `$import" {
+Invoke-Phase "05 Wait for FHIR deployment" {
+    while ($true) {
+        $state = az deployment group show -n $script:FhirDeployName -g $ResourceGroup --query properties.provisioningState -o tsv 2>$null
+        if ($state -eq "Succeeded") { break }
+        if ($state -eq "Failed" -or $state -eq "Canceled") {
+            az deployment operation group list -g $ResourceGroup -n $script:FhirDeployName `
+                --query "[?properties.provisioningState=='Failed'].{Resource:properties.targetResource.resourceName, Code:properties.statusMessage.error.code, Message:properties.statusMessage.error.message}" `
+                -o table 2>&1 | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+            throw "FHIR deployment $state"
+        }
+        Write-Host "  ... FHIR provisioning ($state)"
+        Start-Sleep -Seconds 15
+    }
+    $o = az deployment group show -n $script:FhirDeployName -g $ResourceGroup --query properties.outputs -o json | ConvertFrom-Json
+    $script:FhirUrl = $o.fhirServiceUrl.value
+    $script:FhirMsi = $o.fhirPrincipalId.value
+    Write-Host "FHIR endpoint: $($script:FhirUrl)"
+    Write-Host "FHIR MSI principalId: $($script:FhirMsi)"
+}
+
+Invoke-Phase "06 FHIR `$import" {
     # Build Parameters: one input entry per blob (type parsed from file name).
     $inputs = @()
     foreach ($b in $script:Blobs) {
@@ -226,7 +232,7 @@ Invoke-Phase "11 FHIR `$import" {
             name = "input"
             part = @(
                 @{ name = "type"; valueString = $type }
-                @{ name = "url";  valueUri = "https://$StorageAccount.blob.core.windows.net/$ImportContainer/$b" }
+                @{ name = "url";  valueUri = "https://$($script:StorageAccount).blob.core.windows.net/$ImportContainer/$b" }
             )
         }
     }
@@ -240,7 +246,7 @@ Invoke-Phase "11 FHIR `$import" {
     }
     $body = $params | ConvertTo-Json -Depth 10
 
-    # Kick off (retry: data-plane / MSI RBAC may still be settling).
+    # Retry kickoff: deployer data-plane / MSI->storage role assignments may still be settling.
     $contentLocation = $null
     for ($attempt = 1; $attempt -le 10; $attempt++) {
         $r = Invoke-Fhir -Method Post -Path "/`$import" -Body $body -ExtraHeaders @{ Prefer = "respond-async" }
@@ -257,7 +263,7 @@ Invoke-Phase "11 FHIR `$import" {
     Write-Host "import operation: $contentLocation"
 
     # Poll to completion.
-    $opPath = $contentLocation.Substring($FhirUrl.Length)
+    $opPath = $contentLocation.Substring($script:FhirUrl.Length)
     while ($true) {
         Start-Sleep -Seconds 10
         $p = Invoke-Fhir -Method Get -Path $opPath
@@ -282,7 +288,7 @@ Invoke-Phase "11 FHIR `$import" {
 }
 
 if (-not $SkipExport) {
-    Invoke-Phase "12 FHIR `$export" {
+    Invoke-Phase "07 FHIR `$export" {
         $r = Invoke-Fhir -Method Get -Path "/`$export?_container=$ExportContainer" -ExtraHeaders @{ Accept = "application/fhir+json"; Prefer = "respond-async" }
         if ($r.StatusCode -ne 202) {
             $detail = (ConvertFrom-FhirContent $r | ConvertTo-Json -Depth 5 -Compress)
@@ -291,13 +297,12 @@ if (-not $SkipExport) {
         $contentLocation = $r.Headers["Content-Location"]
         if ($contentLocation -is [array]) { $contentLocation = $contentLocation[0] }
         Write-Host "export operation: $contentLocation"
-        $opPath = $contentLocation.Substring($FhirUrl.Length)
+        $opPath = $contentLocation.Substring($script:FhirUrl.Length)
         while ($true) {
             Start-Sleep -Seconds 10
             $p = Invoke-Fhir -Method Get -Path $opPath
             if ($p.StatusCode -eq 200) {
                 $j = ConvertFrom-FhirContent $p
-                $folder = ($j.output | Select-Object -First 1).url
                 Write-Host "export complete. $($j.output.Count) files written to container '$ExportContainer'."
                 break
             }
@@ -312,5 +317,6 @@ if (-not $SkipExport) {
 
 Write-TimingSummary
 Write-Host ""
-Write-Host "FHIR endpoint: $FhirUrl" -ForegroundColor Green
+Write-Host "FHIR endpoint: $($script:FhirUrl)" -ForegroundColor Green
+Write-Host "Storage:       $($script:StorageAccount)" -ForegroundColor Green
 Write-Host "Done." -ForegroundColor Green
