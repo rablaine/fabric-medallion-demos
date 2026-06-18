@@ -1,0 +1,8 @@
+{"resourceType":"PaymentReconciliation","id":"d389a809-93e9-5db6-a487-de4f49ee4b9c","status":"active","created":"2024-01-15","paymentDate":"2024-01-15","paymentAmount":{"value":100,"currency":"USD"}}
+{"resourceType":"PaymentReconciliation","id":"e46006ab-0012-5383-86b7-1318bd3c00ec","status":"active","created":"2024-01-15","paymentDate":"2024-01-15","paymentAmount":{"value":100,"currency":"USD"}}
+{"resourceType":"PaymentReconciliation","id":"c0b82499-b097-5f09-98ac-df777d5768d9","status":"active","created":"2024-01-15","paymentDate":"2024-01-15","paymentAmount":{"value":100,"currency":"USD"}}
+{"resourceType":"PaymentReconciliation","id":"1a3c3edc-bb71-515d-83cf-4e5a90ca795b","status":"active","created":"2024-01-15","paymentDate":"2024-01-15","paymentAmount":{"value":100,"currency":"USD"}}
+{"resourceType":"PaymentReconciliation","id":"ae4b4596-7ddf-549b-a455-f137ce421f7b","status":"active","created":"2024-01-15","paymentDate":"2024-01-15","paymentAmount":{"value":100,"currency":"USD"}}
+{"resourceType":"PaymentReconciliation","id":"c20856ab-ef00-5299-a715-ac25ba3871fd","status":"active","created":"2024-01-15","paymentDate":"2024-01-15","paymentAmount":{"value":100,"currency":"USD"}}
+{"resourceType":"PaymentReconciliation","id":"73acf632-7111-56c3-9622-c271cee8c7c6","status":"active","created":"2024-01-15","paymentDate":"2024-01-15","paymentAmount":{"value":100,"currency":"USD"}}
+{"resourceType":"PaymentReconciliation","id":"bcc72c8a-01c4-54e1-b00e-12b4fcb739ea","status":"active","created":"2024-01-15","paymentDate":"2024-01-15","paymentAmount":{"value":100,"currency":"USD"}}

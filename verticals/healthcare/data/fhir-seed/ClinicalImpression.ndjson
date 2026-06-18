@@ -1,0 +1,8 @@
+{"resourceType":"ClinicalImpression","id":"3d5dc8e8-961f-5577-bd46-21bd482d3dae","status":"completed","subject":{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"}}
+{"resourceType":"ClinicalImpression","id":"9338c637-45d6-5113-94a8-3ae793eb5f8f","status":"completed","subject":{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"}}
+{"resourceType":"ClinicalImpression","id":"e5dfbed9-b84f-5af7-aa38-eb6746bbd19d","status":"completed","subject":{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"}}
+{"resourceType":"ClinicalImpression","id":"9a4ddae4-4914-5b83-a9fc-8057baee5b63","status":"completed","subject":{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"}}
+{"resourceType":"ClinicalImpression","id":"5bf38620-3645-5ecc-9d40-58da7145c414","status":"completed","subject":{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"}}
+{"resourceType":"ClinicalImpression","id":"c050acca-7309-5b19-9beb-ff15e4d7b10d","status":"completed","subject":{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"}}
+{"resourceType":"ClinicalImpression","id":"73b44264-9633-576d-9a46-c7e319c99c3b","status":"completed","subject":{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"}}
+{"resourceType":"ClinicalImpression","id":"2c776a4c-0133-5fb1-ae67-cd5c5d3ef842","status":"completed","subject":{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"}}

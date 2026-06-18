@@ -1,0 +1,8 @@
+{"resourceType":"EpisodeOfCare","id":"af189769-2b8d-5f25-ae8c-39c4749a416b","status":"active","patient":{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"}}
+{"resourceType":"EpisodeOfCare","id":"7cc4335e-e069-5f3c-b0cc-74939e473e36","status":"active","patient":{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"}}
+{"resourceType":"EpisodeOfCare","id":"8daed7e8-2979-5278-b1cd-c5b52f22f445","status":"active","patient":{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"}}
+{"resourceType":"EpisodeOfCare","id":"88c7b06a-32b0-5ce3-b113-60f7eb2ad5b4","status":"active","patient":{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"}}
+{"resourceType":"EpisodeOfCare","id":"32ef91d4-a837-52a8-9c34-4cfcb2f1f9e7","status":"active","patient":{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"}}
+{"resourceType":"EpisodeOfCare","id":"44e5d75c-a939-5b26-b0a4-cf902fab7212","status":"active","patient":{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"}}
+{"resourceType":"EpisodeOfCare","id":"fcc8c693-314f-5350-9b7f-2d08c37f6af1","status":"active","patient":{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"}}
+{"resourceType":"EpisodeOfCare","id":"aba4e48e-ff8c-5cf5-84f2-e47dce6c92fd","status":"active","patient":{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"}}

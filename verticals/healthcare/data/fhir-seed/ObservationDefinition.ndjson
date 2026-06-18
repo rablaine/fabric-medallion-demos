@@ -1,0 +1,8 @@
+{"resourceType":"ObservationDefinition","id":"3d5b5b9f-f5c0-5e84-9e23-fdb3108f8e3d","code":{"coding":[{"system":"http://loinc.org","code":"2339-0","display":"Glucose"}],"text":"Glucose"}}
+{"resourceType":"ObservationDefinition","id":"64c09264-4f83-587c-ad51-b2f62b228566","code":{"coding":[{"system":"http://loinc.org","code":"2339-0","display":"Glucose"}],"text":"Glucose"}}
+{"resourceType":"ObservationDefinition","id":"99d77dfb-78e7-5608-9bca-7f0289ee4c47","code":{"coding":[{"system":"http://loinc.org","code":"2339-0","display":"Glucose"}],"text":"Glucose"}}
+{"resourceType":"ObservationDefinition","id":"90313f79-676a-54d8-b1b5-8b70b6f9af98","code":{"coding":[{"system":"http://loinc.org","code":"2339-0","display":"Glucose"}],"text":"Glucose"}}
+{"resourceType":"ObservationDefinition","id":"bb181233-6062-591b-95a2-4b057515a72f","code":{"coding":[{"system":"http://loinc.org","code":"2339-0","display":"Glucose"}],"text":"Glucose"}}
+{"resourceType":"ObservationDefinition","id":"029e305d-f12b-5edf-90dd-8c33be01a57c","code":{"coding":[{"system":"http://loinc.org","code":"2339-0","display":"Glucose"}],"text":"Glucose"}}
+{"resourceType":"ObservationDefinition","id":"88c1e34c-df97-5e8e-94ab-375581e91356","code":{"coding":[{"system":"http://loinc.org","code":"2339-0","display":"Glucose"}],"text":"Glucose"}}
+{"resourceType":"ObservationDefinition","id":"dece73b8-7905-5754-a0f5-53bf0060d14f","code":{"coding":[{"system":"http://loinc.org","code":"2339-0","display":"Glucose"}],"text":"Glucose"}}

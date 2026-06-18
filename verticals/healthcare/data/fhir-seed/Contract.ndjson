@@ -1,0 +1,8 @@
+{"resourceType":"Contract","id":"e6246252-db4c-59bb-8cc6-3cfb881558e6","status":"executed","subject":[{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"}]}
+{"resourceType":"Contract","id":"b7c839cc-5ac8-5157-9321-c84a1595a406","status":"executed","subject":[{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"}]}
+{"resourceType":"Contract","id":"2ddaa473-2fd8-57be-8692-9361621cdbe2","status":"executed","subject":[{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"}]}
+{"resourceType":"Contract","id":"5fb9846a-8656-5375-8e58-4f6e574489ed","status":"executed","subject":[{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"}]}
+{"resourceType":"Contract","id":"e09c0c4a-cf92-5dc5-a6a9-dfd30c953060","status":"executed","subject":[{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"}]}
+{"resourceType":"Contract","id":"617ce8d7-c7f2-59fa-9c68-5a904d721b8c","status":"executed","subject":[{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"}]}
+{"resourceType":"Contract","id":"3fe6a4f4-5323-5627-bf06-8fd981df00cf","status":"executed","subject":[{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"}]}
+{"resourceType":"Contract","id":"87f3c2ec-7a05-5150-b5d5-fae093612a78","status":"executed","subject":[{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"}]}

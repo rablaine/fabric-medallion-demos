@@ -1,0 +1,8 @@
+{"resourceType":"RiskAssessment","id":"020e80a6-2e47-5801-a8d7-73bd0190106e","status":"final","subject":{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"}}
+{"resourceType":"RiskAssessment","id":"dcaf597c-a4ce-59c9-8f2b-84d899aa32b8","status":"final","subject":{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"}}
+{"resourceType":"RiskAssessment","id":"c4e0b76c-39df-5910-b3bc-9df141ded125","status":"final","subject":{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"}}
+{"resourceType":"RiskAssessment","id":"e688226a-26c6-599b-a6af-6ef530404078","status":"final","subject":{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"}}
+{"resourceType":"RiskAssessment","id":"5c7d3f4f-4b3f-5e78-8542-1912478124ca","status":"final","subject":{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"}}
+{"resourceType":"RiskAssessment","id":"42fd8ef7-c5f3-5f60-87a5-3d58133190c8","status":"final","subject":{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"}}
+{"resourceType":"RiskAssessment","id":"80e00989-a11a-5f7c-adff-896d1570d547","status":"final","subject":{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"}}
+{"resourceType":"RiskAssessment","id":"8035882a-ab72-5610-a4d2-87fcd6244452","status":"final","subject":{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"}}

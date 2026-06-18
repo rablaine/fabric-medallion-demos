@@ -1,0 +1,8 @@
+{"resourceType":"DetectedIssue","id":"c8e44588-15b2-5cbd-be0c-2be15b26cbf5","status":"final","patient":{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"}}
+{"resourceType":"DetectedIssue","id":"5bfe5f98-8ae3-56bb-9459-e91da16e589f","status":"final","patient":{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"}}
+{"resourceType":"DetectedIssue","id":"2f3a60ee-81ee-509e-9058-89007db39b89","status":"final","patient":{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"}}
+{"resourceType":"DetectedIssue","id":"4117135e-0db4-5115-b3ea-e0948acab563","status":"final","patient":{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"}}
+{"resourceType":"DetectedIssue","id":"ef40dc2f-b117-55fb-9764-e867e4383020","status":"final","patient":{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"}}
+{"resourceType":"DetectedIssue","id":"7b07e1d4-b7cb-5697-bd9e-80e554aee6a4","status":"final","patient":{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"}}
+{"resourceType":"DetectedIssue","id":"fe5c36ee-8cdf-5310-a0b6-6bf744da4a9c","status":"final","patient":{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"}}
+{"resourceType":"DetectedIssue","id":"9de926cb-4283-5db8-b25a-cadaab8e49f9","status":"final","patient":{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"}}
