@@ -87,6 +87,11 @@ function Invoke-FabricRest {
     $maxTokenRefreshes = 2
     $tokenRefreshes    = 0
     $resp = $null
+    # Initialize so the catch block can reference them under Set-StrictMode even
+    # when Invoke-RestMethod throws before populating the -StatusCodeVariable /
+    # -ResponseHeadersVariable (e.g. on a 4xx error response).
+    $respStatus  = $null
+    $respHeaders = $null
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         try {
             $resp = Invoke-RestMethod @params

@@ -1,9 +1,16 @@
 // =============================================================================
 // Contoso Healthcare - Azure Health Data Services workspace + FHIR R4 service
+//                       + Microsoft Fabric F8 capacity
 // =============================================================================
 // This is the long pole of the deploy (~6 min). deploy.ps1 launches it with
 // --no-wait so the seed upload (against the storage account from storage.bicep)
 // runs in parallel while the FHIR service provisions.
+//
+// The Fabric F8 capacity is provisioned by this SAME template so the entire
+// Azure estate (storage is the only other template, deployed first/sync) lands
+// in a single ARM operation. The capacity provisions in parallel with FHIR and
+// in the same region. The analytics workspace is created post-deploy via the
+// Fabric REST API (workspaces are not an ARM resource).
 //
 // import/export config and the AAD authentication config are baked into the
 // service resource at create time, so there is no separate post-create
@@ -19,7 +26,7 @@ targetScope = 'resourceGroup'
 @maxLength(12)
 param resourcePrefix string = 'contoso'
 
-@description('Azure region (AHDS is region-limited; southcentralus is validated).')
+@description('Azure region. Must support Azure Health Data Services AND have Fabric capacity quota (West US 3 is validated; East US / East US 2 excluded).')
 param location string = resourceGroup().location
 
 @description('Object ID of the deploying user. Granted FHIR Data Contributor so deploy.ps1 can run $import / $export.')
@@ -27,6 +34,12 @@ param deployerObjectId string
 
 @description('FHIR service (child) name. Forms the host: <workspace>-<service>.fhir.azurehealthcareapis.com')
 param fhirServiceName string = 'fhirr4'
+
+@description('UPN of the user to grant Fabric capacity admin (must be a member of the Fabric tenant).')
+param adminUserPrincipalName string
+
+@description('Deploy the Fabric F8 capacity alongside FHIR. Set false to skip (matches deploy.ps1 -SkipFabric).')
+param deployFabric bool = true
 
 @description('Common tags')
 param tags object = {
@@ -38,6 +51,7 @@ param tags object = {
 var suffix             = uniqueString(resourceGroup().id)
 var workspaceName      = toLower('${resourcePrefix}hls${substring(suffix, 0, 8)}') // workspace = alphanumeric only
 var storageAccountName = toLower('${resourcePrefix}hl${substring(suffix, 0, 8)}')  // must match storage.bicep
+var capacityName       = toLower('${resourcePrefix}health${substring(suffix, 0, 8)}') // 3-63 lowercase alphanumeric, unique in the Fabric tenant
 var fhirUrl            = 'https://${workspaceName}-${fhirServiceName}.fhir.azurehealthcareapis.com'
 
 // FHIR Data Contributor / Storage Blob Data Contributor
@@ -103,8 +117,31 @@ resource fhirStorageRbac 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   }
 }
 
+// Microsoft Fabric F8 capacity. Deployed here (rather than a separate template)
+// so the whole estate lands in one ARM operation. F8 = ~$1.05/hr; PAUSE it in
+// the Azure portal when idle - the workspace stays browsable, compute stops.
+resource capacity 'Microsoft.Fabric/capacities@2023-11-01' = if (deployFabric) {
+  name: capacityName
+  location: location
+  tags: tags
+  sku: {
+    name: 'F8'
+    tier: 'Fabric'
+  }
+  properties: {
+    administration: {
+      members: [
+        adminUserPrincipalName
+      ]
+    }
+  }
+}
+
 output fhirServiceUrl  string = fhirUrl
 output workspaceName   string = workspaceName
 output fhirServiceName string = fhirServiceName
 output fhirPrincipalId string = fhir.identity.principalId
 output storageAccountName string = storageAccountName
+// The Fabric REST API addresses capacities by their GUID, not the ARM id.
+// deploy.ps1 looks the GUID up by this displayName via GET /v1/capacities.
+output capacityName string = capacityName

@@ -9,8 +9,9 @@
 
 ## Target
 
-- **Region:** `southcentralus` — Azure Health Data Services is **not** available
-  in Central US / East US / East US 2. Confirm availability with:
+- **Region:** `westus3` — single region for the whole estate. It must support
+  Azure Health Data Services (**not** available in Central US / East US / East
+  US 2) **and** have Microsoft Fabric capacity quota. Confirm AHDS availability:
   `az provider show --namespace Microsoft.HealthcareApis --query "resourceTypes[?resourceType=='workspaces'].locations | [0]"`
 - **POC resource group:** `rg-contoso-health-poc`
 - **Tenant/sub:** test tenant `ME-MngEnvMCAP094505-alexbla-1`
@@ -54,12 +55,12 @@ az provider show --namespace Microsoft.HealthcareApis --query registrationState 
 
 ### ✅ 1. Resource group
 ```powershell
-az group create -n rg-contoso-health-poc -l southcentralus
+az group create -n rg-contoso-health-poc -l westus3
 ```
 
 ### ✅ 2. AHDS workspace (name must be alphanumeric only)
 ```powershell
-az healthcareapis workspace create -g rg-contoso-health-poc -n hdscontosohealth -l southcentralus
+az healthcareapis workspace create -g rg-contoso-health-poc -n hdscontosohealth -l westus3
 ```
 
 ### ✅ 3. FHIR R4 service (system-assigned identity for export/import)
@@ -69,7 +70,7 @@ you MUST pass `authority` (tenant login URL) and `audience` (the FHIR URL).
 $tenant = az account show --query tenantId -o tsv
 az healthcareapis workspace fhir-service create `
   -g rg-contoso-health-poc --workspace-name hdscontosohealth --fhir-service-name fhirr4 `
-  --kind fhir-R4 -l southcentralus --identity-type SystemAssigned `
+  --kind fhir-R4 -l westus3 --identity-type SystemAssigned `
   --authentication-configuration `
      authority="https://login.microsoftonline.com/$tenant" `
      audience="https://hdscontosohealth-fhirr4.fhir.azurehealthcareapis.com"
@@ -93,7 +94,7 @@ Storage is needed for the **$export → Fabric** side only (population is a dire
 PUT, step 7). Shared-key auth is disabled by default on new accounts — use
 `--auth-mode login` for all data-plane calls.
 ```powershell
-az storage account create -n stcontosohealthpoc -g rg-contoso-health-poc -l southcentralus `
+az storage account create -n stcontosohealthpoc -g rg-contoso-health-poc -l westus3 `
   --sku Standard_LRS --kind StorageV2 --enable-hierarchical-namespace true
 $sid = az storage account show -n stcontosohealthpoc -g rg-contoso-health-poc --query id -o tsv
 
@@ -188,8 +189,8 @@ create an **ADLS Gen2 shortcut**:
 - How much of steps 9–11 is reachable via the Fabric REST API vs. must stay
   manual clicks? (The "nothing → insights in N clicks" story may *want* some of
   it manual.)
-- Naming/region: Fabric capacity is in westus3 while AHDS is in southcentralus —
-  fine (OneLake shortcut is cross-region), but note the egress.
+- Naming/region: Fabric capacity, AHDS, and storage all land in westus3 (single
+  region), so the OneLake shortcut over the FHIR `$export` stays in-region.
 - Grant the Fabric workspace identity `Storage Blob Data Reader` on the export
   account as part of deploy.
 

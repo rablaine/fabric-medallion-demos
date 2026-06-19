@@ -1,11 +1,8 @@
 id: healthcare
 name: Healthcare
 description: A FHIR-first healthcare data estate — Azure Health Data Services with a populated FHIR Service (Synthea synthetic patients), a bulk FHIR $export into ADLS Gen2, an OneLake shortcut into Microsoft Fabric, and the Healthcare data solutions in Fabric medallion (bronze / silver / gold) turning raw FHIR resources into analytics-ready tables, semantic models, and Power BI reports.
-status: in-progress
-deployable: false
-preview_note: >-
-  Live proof-of-concept in progress. The deployment package isn't published yet —
-  the recipe is being validated by hand in a test tenant first. Check back soon.
+status: available
+deployable: true
 azure_services:
   - Azure Health Data Services workspace (Microsoft.HealthcareApis)
   - FHIR Service (R4) seeded with Synthea synthetic patient bundles
