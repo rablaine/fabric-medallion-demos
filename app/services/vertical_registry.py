@@ -23,6 +23,10 @@ class Vertical:
     preview_note: str = ""
     azure_services: list[str] = field(default_factory=list)
     executive_kpis: list[str] = field(default_factory=list)
+    # Optional per-vertical deployment flows. When present, the detail page
+    # presents each flow as a distinct path with its own accurate
+    # "what gets deployed" list instead of a single combined azure_services list.
+    flows: list[dict] = field(default_factory=list)
     root_path: Optional[Path] = None
 
 
@@ -51,6 +55,7 @@ class VerticalRegistry:
                 preview_note=data.get("preview_note", ""),
                 azure_services=data.get("azure_services", []),
                 executive_kpis=data.get("executive_kpis", []),
+                flows=data.get("flows", []),
                 root_path=child,
             )
             self._verticals[vertical.id] = vertical

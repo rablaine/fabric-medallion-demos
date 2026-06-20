@@ -8,8 +8,19 @@ REM lets the user delete the downloaded folder immediately after a run (or even
 REM mid-run if they need to abort), without "folder in use" errors from
 REM Windows Explorer / OneDrive / Defender holding the dir open.
 set SCRIPT_DIR=%~dp0
+
+REM Pick the flow from deployment.config: DEPLOY_MODE=sampledata runs the
+REM assisted sample-data flow; anything else (incl. missing) runs the full
+REM FHIR-first flow. Keeps a single "run deploy.cmd" entry point for both.
+set DEPLOY_SCRIPT=deploy.ps1
+if exist "%SCRIPT_DIR%deployment.config" (
+    for /f "usebackq tokens=2 delims==" %%a in (`findstr /b /i /c:"DEPLOY_MODE=" "%SCRIPT_DIR%deployment.config"`) do set DEPLOY_MODE=%%a
+)
+if /i "%DEPLOY_MODE%"=="sampledata" set DEPLOY_SCRIPT=deploy-sampledata.ps1
+echo Running %DEPLOY_SCRIPT% ...
+
 cd /d %TEMP%
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '%SCRIPT_DIR%deploy.ps1'"
+pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& '%SCRIPT_DIR%%DEPLOY_SCRIPT%'"
 set DEPLOY_EXIT=%errorlevel%
 echo.
 if %DEPLOY_EXIT% NEQ 0 (

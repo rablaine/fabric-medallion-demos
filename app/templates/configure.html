@@ -9,6 +9,27 @@
     <p>Set your deployment parameters, then download a customized package that you can run with your own Azure CLI credentials.</p>
 
     <form method="post" action="/deploy/{{ vertical.id }}/package" class="config-form">
+        <input type="hidden" name="deploy_mode" value="{{ selected_flow }}">
+        <div class="chosen-flow">
+            <div class="chosen-flow-text">
+                <span class="chosen-flow-label">Deployment flow</span>
+                {% if selected_flow == 'sampledata' %}
+                <strong>Assisted sample-data demo</strong>
+                <small>Skips Azure Health Data Services entirely. Sets up a
+                Fabric F8 capacity, workspace, and Healthcare data solutions item,
+                walks you through Data Foundations <em>with the built-in sample
+                dataset</em>, then stages the curated clinical data and (optionally)
+                kicks off ingestion.</small>
+                {% else %}
+                <strong>FHIR demo</strong>
+                <small>Stands up Azure Health Data Services (FHIR R4) + storage +
+                Fabric, seeds synthetic patients, and wires the medallion over the
+                FHIR <code>$export</code>. One short manual portal step. ~20 min.</small>
+                {% endif %}
+            </div>
+            <a href="/verticals/{{ vertical.id }}" class="chosen-flow-change">&larr; Change flow</a>
+        </div>
+
         <label>
             Resource Group Name
             <input type="text" name="resource_group" value="rg-contoso-{{ vertical.id }}" required>
@@ -22,9 +43,15 @@
         <label class="readonly-field">
             Azure Region
             <input type="text" value="West US 3 (fixed)" disabled>
+            {% if selected_flow == 'sampledata' %}
+            <small>Fixed to a region with Microsoft Fabric F8 capacity quota.
+            Kept consistent with the FHIR flow, so the region isn't selectable
+            for this vertical.</small>
+            {% else %}
             <small>Fixed to a region that supports Azure Health Data Services
             (FHIR R4) and Microsoft Fabric F8 capacity. AHDS isn't offered in
             East US / East US 2, so the region isn't selectable for this vertical.</small>
+            {% endif %}
         </label>
 
         <label>
@@ -168,22 +195,140 @@
         </p>
     </dialog>
 
+    <dialog id="sampledata-modal" class="walkthrough-modal">
+        <button type="button" class="walkthrough-close" aria-label="Close" onclick="closeWalkthrough()">&times;</button>
+        <h2>What the assisted sample-data flow does, step by step</h2>
+        <p>
+            You fill in the form above, choose <em>Assisted sample-data demo</em>,
+            and download the zip. Inside, <code>deploy.cmd</code> runs the assisted
+            flow (<code>deploy-sampledata.ps1</code>). It does NOT deploy Azure
+            Health Data Services or any FHIR service &mdash; the demo data comes
+            from Fabric's built-in Healthcare data solutions <em>sample dataset</em>,
+            which the script stages into the medallion the way the docs intend.
+        </p>
+
+        <details class="deploy-step">
+            <summary>Stand up the resource group + Fabric capacity</summary>
+            <div class="deploy-step-body">
+                <p>Bicep creates just what's needed in your subscription (West US 3):</p>
+                <ul>
+                    <li>Resource group</li>
+                    <li><strong>Microsoft Fabric F8 capacity</strong> with you assigned as admin</li>
+                </ul>
+                <p>No storage account, no Azure Health Data Services, no FHIR service.</p>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>Create the Fabric workspace + Healthcare data solutions item</summary>
+            <div class="deploy-step-body">
+                <ul>
+                    <li>Creates a Fabric <strong>workspace</strong> bound to the F8 capacity</li>
+                    <li>Creates the <strong>Healthcare data solutions</strong> item via the Fabric REST API</li>
+                </ul>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>Pause: you deploy Data Foundations <em>with sample data</em> (~5 min)</summary>
+            <div class="deploy-step-body">
+                <p>
+                    The script gives you the direct workspace link and waits. In the
+                    portal you open the Healthcare data solutions item, run
+                    <strong>Setup your solution</strong> &rarr; <strong>Data
+                    Foundations</strong>, and &mdash; unlike the FHIR flow &mdash;
+                    <strong>check the &ldquo;Sample data&rdquo; box</strong> so the
+                    built-in synthetic dataset (51K synthetic patients) loads. Then
+                    <strong>Review &amp; Deploy</strong>. When it finishes, you come
+                    back to the terminal and press Enter.
+                </p>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>The script stages the data, fixes the runtime, and (optionally) ingests</summary>
+            <div class="deploy-step-body">
+                <p>Once foundations + sample data exist, the script:</p>
+                <ul>
+                    <li><strong>Stages the curated clinical files</strong> from the lakehouse
+                        <code>Files/SampleData/Clinical/FHIR-NDJSON/FHIR-HDS</code> folder into
+                        <code>Files/Ingest/Clinical/FHIR-NDJSON/FHIR-HDS</code>. Staging into
+                        <em>Ingest</em> (not pointing the pipeline at SampleData) is what lets HDS
+                        derive the <code>sourceSystem</code> from the namespace folder during the
+                        raw&rarr;process move &mdash; the by-the-book happy path. A curated resource
+                        list is used so the one bad shipped file (RiskAssessment, missing
+                        <code>meta.lastUpdated</code>) is left out and bronze validation stays clean.</li>
+                    <li><strong>Patches the config notebook (scipy fix):</strong> injects a repair
+                        cell that reinstalls <code>scipy</code> in-session, working around the
+                        Fabric Runtime 1.3 HDS environment's version skew. <em>(Best-effort
+                        workaround until Microsoft ships a platform fix.)</em></li>
+                    <li>Waits for the Spark environment to finish publishing, then offers to
+                        <strong>kick off the clinical data foundation ingestion pipeline</strong>
+                        (bronze &rarr; silver), or hands you the link to run it yourself.</li>
+                </ul>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>What it costs to run</summary>
+            <div class="deploy-step-body">
+                <p>Rough US list pricing, mid-2026. The only paid resource is the Fabric capacity.</p>
+                <table class="price-table">
+                    <thead>
+                        <tr><th>Resource</th><th>SKU</th><th>If you leave it running 24/7</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Microsoft Fabric capacity</strong></td>
+                            <td>F8 (pay-as-you-go)</td>
+                            <td>~$1.05/hr &rarr; ~$770/month <em>(pause when idle to drop to ~$0)</em></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p>
+                    Pause the F8 capacity when you're not demoing and it's a few
+                    dollars a month. Run <code>teardown.cmd</code> when you're done
+                    to drop it to $0.
+                </p>
+            </div>
+        </details>
+
+        <h3>When it's done</h3>
+        <p>
+            Open <a href="https://app.fabric.microsoft.com" target="_blank" rel="noopener">Fabric</a>,
+            browse the workspace, and explore the silver healthcare data model
+            (FHIR resources flattened into tabular tables) ready for semantic
+            models and Power BI reports.
+        </p>
+        <p>
+            <em>When you're done, run <code>teardown.cmd</code> from the same package and it'll delete the Fabric workspace and then the resource group (which holds the F8 capacity).</em>
+        </p>
+    </dialog>
+
     <script>
         const walkthroughModal = document.getElementById('walkthrough-modal');
-        function openWalkthrough() { walkthroughModal.showModal(); }
+        const sampledataModal = document.getElementById('sampledata-modal');
+
+        function selectedFlow() {
+            const input = document.querySelector('input[name="deploy_mode"]');
+            return input && input.value === 'sampledata' ? 'sampledata' : 'fhir';
+        }
+        function activeModal() {
+            return selectedFlow() === 'sampledata' ? sampledataModal : walkthroughModal;
+        }
+        function openWalkthrough() { activeModal().showModal(); }
         function closeWalkthrough() {
-            walkthroughModal.classList.add('closing');
-            walkthroughModal.addEventListener('animationend', () => {
-                walkthroughModal.classList.remove('closing');
-                walkthroughModal.close();
+            const m = document.querySelector('dialog.walkthrough-modal[open]') || activeModal();
+            m.classList.add('closing');
+            m.addEventListener('animationend', () => {
+                m.classList.remove('closing');
+                m.close();
             }, { once: true });
         }
-        walkthroughModal.addEventListener('click', (e) => {
-            if (e.target === walkthroughModal) closeWalkthrough();
-        });
-        walkthroughModal.addEventListener('cancel', (e) => {
-            e.preventDefault();
-            closeWalkthrough();
+
+        [walkthroughModal, sampledataModal].forEach((m) => {
+            m.addEventListener('click', (e) => { if (e.target === m) closeWalkthrough(); });
+            m.addEventListener('cancel', (e) => { e.preventDefault(); closeWalkthrough(); });
         });
     </script>
 </section>

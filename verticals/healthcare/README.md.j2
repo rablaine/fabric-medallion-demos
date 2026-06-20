@@ -2,6 +2,130 @@
 
 Generated for resource group **{{ config.resource_group }}** in **{{ config.location }}**.
 
+{% if config.deploy_mode == 'sampledata' %}
+> **Flow: Assisted sample-data demo.** This package runs the *lighter* flow —
+> no Azure Health Data Services, no FHIR service. The demo data comes from
+> Fabric's built-in Healthcare data solutions **sample dataset**, which the
+> script stages into the medallion the way the docs intend.
+
+## What this does for you
+
+In one script (with one short manual step in the Fabric portal), you get a
+working **Contoso Healthcare** medallion estate driven by the built-in sample
+dataset:
+
+1. You picked the resource group and resource prefix in the Fabric Data Estate
+   Builder web app — that's baked into this zip. The region is fixed to
+   **{{ config.location }}** (Fabric capacity quota).
+2. You'll run `deploy.cmd` (it auto-selects the assisted flow,
+   `deploy-sampledata.ps1`). It prompts for your Azure account and subscription
+   (`az login`), then:
+
+   | Step | What gets created | Why |
+   |------|-------------------|-----|
+   | 1 | **Resource group** `{{ config.resource_group }}` in `{{ config.location }}` | Container for the capacity |
+   | 2 | **Microsoft Fabric F8 capacity** (admin = you) | Runs the Fabric / HDS workloads |
+   | 3 | **Fabric workspace** bound to the F8 capacity | Hosts the analytics estate |
+   | 4 | **Healthcare data solutions** item `{{ config.resource_prefix }}healthcare` (via REST) | The HDS container item |
+
+3. **Manual step (in the Fabric portal, ~5 min):** Healthcare data *foundations*
+   and the *sample data* load can only be done from the portal wizard. The
+   script **pauses**, gives you the direct workspace link, and waits. In the
+   portal:
+   1. Open the **Healthcare data solutions** item named
+      **`{{ config.resource_prefix }}healthcare`**.
+   2. Click **Setup your solution**, then step through the wizard:
+      - **Data Foundations** is checked by default → **Next**
+      - **Check the "Sample data" box** (this is the *opposite* of the FHIR flow
+        — here you *want* the built-in synthetic dataset) → **Next**
+      - No additional capabilities → **Next**
+      - No settings to configure → **Next**
+      - Check the box to accept the **terms of service** → **Deploy**
+   3. Wait for it to finish (don't close the portal tab), then return to the
+      terminal and press Enter. **Note:** the spinner doesn't auto-update — if
+      it's still spinning past ~3 min, **refresh the page**; it's likely done.
+4. After you confirm, the script finishes everything for you:
+   - **Stages the curated clinical files** from the bronze lakehouse's
+     `Files/SampleData/Clinical/FHIR-NDJSON/FHIR-HDS` folder into
+     `Files/Ingest/Clinical/FHIR-NDJSON/FHIR-HDS`. Staging into **Ingest** (vs.
+     pointing the pipeline at SampleData) is what lets HDS derive the
+     `sourceSystem` from the namespace folder during the raw→process move — the
+     by-the-book happy path. A curated resource list omits the one bad shipped
+     file (`RiskAssessment`, missing `meta.lastUpdated`) so bronze validation
+     stays clean.
+   - **Patches the config notebook (scipy fix):** injects a repair cell that
+     reinstalls `scipy` in-session, working around the Fabric Runtime 1.3 HDS
+     environment's version skew. *(Best-effort workaround until Microsoft ships
+     a platform fix.)*
+   - Waits for the Spark environment to publish, then asks whether to **kick off
+     the ingestion pipeline** now (bronze → silver), or hands you the link to
+     run it from Fabric yourself.
+
+> When you're done, **pause the Fabric capacity** in the Azure portal (or run
+> `teardown.cmd`) to stop the bill. F8 is ~$1.05/hr if left running.
+
+## Prerequisites
+
+- Azure CLI installed and authenticated (`az login`)
+- Rights to create a resource group + Fabric capacity in the subscription
+- PowerShell 7+ (for `deploy-sampledata.ps1`)
+- Fabric enabled on your tenant, with permission to create capacities/workspaces
+
+## Deploy
+
+Downloaded files are blocked by Windows ("Mark of the Web"). Unblock first, then
+run **`deploy.cmd`** (it auto-selects the assisted flow and launches pwsh 7 with
+the correct stdin handling — the script pauses for the portal step and the
+pipeline prompt, so interactive input must work):
+
+```powershell
+Get-ChildItem -Recurse | Unblock-File
+.\deploy.cmd
+```
+
+Or run the assisted script directly from a `pwsh` 7 window opened from the Start
+menu / Windows Terminal:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\deploy-sampledata.ps1
+```
+
+**Do not** use `pwsh -ExecutionPolicy Bypass -File .\deploy-sampledata.ps1` from
+`powershell.exe` 5.1 — Read-Host hangs.
+
+## What This Deploys
+
+{% for service in vertical.azure_services -%}
+- {{ service }}
+{% endfor %}
+
+## After Deployment
+
+Browse the workspace in [Fabric](https://app.fabric.microsoft.com) and explore
+the silver healthcare data model (FHIR resources flattened into tabular tables),
+ready for semantic models and Power BI reports such as:
+
+{% for kpi in vertical.executive_kpis -%}
+- {{ kpi }}
+{% endfor %}
+
+## Teardown
+
+Run **`teardown.cmd`** from this folder. It deletes the Fabric workspace, then
+the resource group (which holds the F8 capacity), dropping the estate to $0.
+
+## Configuration
+
+This package was generated with the following settings (see `deployment.config`):
+
+- **Deployment flow**: `sampledata` (assisted sample-data demo)
+- **Resource Group**: `{{ config.resource_group }}`
+- **Location**: `{{ config.location }}` (fixed for this vertical)
+- **Resource Prefix**: `{{ config.resource_prefix }}`
+
+To change these, regenerate the package from the Fabric Data Estate Builder web app.
+{% else %}
 ## What this does for you
 
 In one script (with one short manual step in the Fabric portal), you get a
@@ -119,3 +243,4 @@ This package was generated with the following settings (see `deployment.config`)
 - **Resource Prefix**: `{{ config.resource_prefix }}`
 
 To change these, regenerate the package from the Fabric Data Estate Builder web app.
+{% endif %}

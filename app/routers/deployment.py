@@ -24,6 +24,7 @@ async def generate_package(
     resource_prefix: str = Form("contoso"),
     auto_run_initial_load: str = Form(None),
     deploy_purview: str = Form(None),
+    deploy_mode: str = Form("fhir"),
 ):
     """Generate a downloadable deployment package for the selected vertical."""
     registry = request.app.state.registry
@@ -42,6 +43,10 @@ async def generate_package(
     # form posted without JS still produces a coherent package.
     auto_run_flag = (auto_run_initial_load is not None) or deploy_purview_flag
 
+    # Deployment flow selector. Only the healthcare vertical offers an assisted
+    # sample-data flow; everything else (and any unknown value) is the default.
+    deploy_mode_val = "sampledata" if deploy_mode == "sampledata" else "fhir"
+
     builder = PackageBuilder(vertical=vertical)
     package_path = builder.build(
         config={
@@ -50,6 +55,7 @@ async def generate_package(
             "resource_prefix": resource_prefix,
             "auto_run_initial_load": auto_run_flag,
             "deploy_purview": deploy_purview_flag,
+            "deploy_mode": deploy_mode_val,
         }
     )
 
@@ -67,6 +73,7 @@ async def generate_package(
             "resource_prefix": resource_prefix,
             "auto_run_initial_load": auto_run_flag,
             "deploy_purview": deploy_purview_flag,
+            "deploy_mode": deploy_mode_val,
         },
     )
 
