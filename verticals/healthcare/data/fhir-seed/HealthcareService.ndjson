@@ -1,0 +1,8 @@
+{"resourceType":"HealthcareService","id":"966c182e-b10e-5cf6-b55f-129ae42576a3","active":true,"name":"Demo Clinic Service","providedBy":{"reference":"Organization/74ab949d-17ac-3309-83a0-13b4405c66aa"}}
+{"resourceType":"HealthcareService","id":"806dc6d2-fe6a-5296-9b76-6633695dfca8","active":true,"name":"Demo Clinic Service","providedBy":{"reference":"Organization/2936ca90-6594-357d-be14-53fe0ab84dd1"}}
+{"resourceType":"HealthcareService","id":"91c6baf3-7e96-56b5-99a7-9811e971bfd6","active":true,"name":"Demo Clinic Service","providedBy":{"reference":"Organization/02c936e2-3aee-38b2-88a4-81f3689b7bb7"}}
+{"resourceType":"HealthcareService","id":"46dc94bf-b50d-55a8-845d-9a940b0e5425","active":true,"name":"Demo Clinic Service","providedBy":{"reference":"Organization/5f7663da-4b19-3629-b8f2-fb07d75421d9"}}
+{"resourceType":"HealthcareService","id":"329a24b5-add2-561f-a084-f0b92293f071","active":true,"name":"Demo Clinic Service","providedBy":{"reference":"Organization/7b9a19b2-d900-3f93-a47b-4b88491fb57b"}}
+{"resourceType":"HealthcareService","id":"b5056fdb-8560-5825-937b-f8c185f645ec","active":true,"name":"Demo Clinic Service","providedBy":{"reference":"Organization/6cf8a214-8d57-3267-85e5-7719e15cd63e"}}
+{"resourceType":"HealthcareService","id":"786f054f-c895-5f84-9074-48fd0dca4936","active":true,"name":"Demo Clinic Service","providedBy":{"reference":"Organization/b4e81d20-a3d6-39db-8b04-bcc4ab5de7b2"}}
+{"resourceType":"HealthcareService","id":"ab184b48-4711-5272-bcdc-5f35b19a1968","active":true,"name":"Demo Clinic Service","providedBy":{"reference":"Organization/c7b63332-fdc7-3ab3-936b-284b931a9f6a"}}

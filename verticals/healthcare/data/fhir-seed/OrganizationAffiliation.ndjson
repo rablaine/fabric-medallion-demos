@@ -1,0 +1,8 @@
+{"resourceType":"OrganizationAffiliation","id":"0e3271ae-0cad-5bb1-8053-c9a2f596ad9f","active":true,"organization":{"reference":"Organization/74ab949d-17ac-3309-83a0-13b4405c66aa"}}
+{"resourceType":"OrganizationAffiliation","id":"8d94b3d7-8cad-5d46-8867-58ef083d2903","active":true,"organization":{"reference":"Organization/2936ca90-6594-357d-be14-53fe0ab84dd1"}}
+{"resourceType":"OrganizationAffiliation","id":"6662613f-4ae6-587b-9444-1ec00c6aba9d","active":true,"organization":{"reference":"Organization/02c936e2-3aee-38b2-88a4-81f3689b7bb7"}}
+{"resourceType":"OrganizationAffiliation","id":"441645b6-fefe-5e19-8d88-069c5a83bd5d","active":true,"organization":{"reference":"Organization/5f7663da-4b19-3629-b8f2-fb07d75421d9"}}
+{"resourceType":"OrganizationAffiliation","id":"a21eb06b-d235-5be4-8a26-0b859893e501","active":true,"organization":{"reference":"Organization/7b9a19b2-d900-3f93-a47b-4b88491fb57b"}}
+{"resourceType":"OrganizationAffiliation","id":"0d3dc0db-9cf6-5bfb-8519-3012803ae427","active":true,"organization":{"reference":"Organization/6cf8a214-8d57-3267-85e5-7719e15cd63e"}}
+{"resourceType":"OrganizationAffiliation","id":"4c9333d9-96bb-53d5-a77a-f306f34c5078","active":true,"organization":{"reference":"Organization/b4e81d20-a3d6-39db-8b04-bcc4ab5de7b2"}}
+{"resourceType":"OrganizationAffiliation","id":"636445ed-f00f-5260-8f2f-98f9e1f731a9","active":true,"organization":{"reference":"Organization/c7b63332-fdc7-3ab3-936b-284b931a9f6a"}}

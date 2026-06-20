@@ -16,8 +16,17 @@ class Vertical:
     name: str
     description: str
     status: str  # "available", "in-progress", "planned"
+    # Whether a downloadable deployment package can be built yet. A vertical can
+    # be "in-progress" (visible, actively being built) while its deploy package
+    # isn't published — the recipe is still being validated by hand.
+    deployable: bool = True
+    preview_note: str = ""
     azure_services: list[str] = field(default_factory=list)
     executive_kpis: list[str] = field(default_factory=list)
+    # Optional per-vertical deployment flows. When present, the detail page
+    # presents each flow as a distinct path with its own accurate
+    # "what gets deployed" list instead of a single combined azure_services list.
+    flows: list[dict] = field(default_factory=list)
     root_path: Optional[Path] = None
 
 
@@ -42,8 +51,11 @@ class VerticalRegistry:
                 name=data["name"],
                 description=data["description"],
                 status=data.get("status", "planned"),
+                deployable=data.get("deployable", True),
+                preview_note=data.get("preview_note", ""),
                 azure_services=data.get("azure_services", []),
                 executive_kpis=data.get("executive_kpis", []),
+                flows=data.get("flows", []),
                 root_path=child,
             )
             self._verticals[vertical.id] = vertical

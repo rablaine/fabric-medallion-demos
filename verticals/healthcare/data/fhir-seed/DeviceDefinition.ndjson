@@ -1,0 +1,8 @@
+{"resourceType":"DeviceDefinition","id":"616a75e7-84a1-5adb-ab1d-55ce59a15fb3","type":{"coding":[{"system":"http://snomed.info/sct","code":"260385009","display":"Demo device type"}],"text":"Demo device type"}}
+{"resourceType":"DeviceDefinition","id":"499af8a7-73a5-516e-9079-094dbd1c1442","type":{"coding":[{"system":"http://snomed.info/sct","code":"260385009","display":"Demo device type"}],"text":"Demo device type"}}
+{"resourceType":"DeviceDefinition","id":"ea5009dc-66b9-5ab1-89e4-9f7e74fb6fdf","type":{"coding":[{"system":"http://snomed.info/sct","code":"260385009","display":"Demo device type"}],"text":"Demo device type"}}
+{"resourceType":"DeviceDefinition","id":"00c2cfef-0b20-561a-9c8f-2cfc00afb3b1","type":{"coding":[{"system":"http://snomed.info/sct","code":"260385009","display":"Demo device type"}],"text":"Demo device type"}}
+{"resourceType":"DeviceDefinition","id":"df0791d1-a6f7-59d5-b0ac-b8d0091b3325","type":{"coding":[{"system":"http://snomed.info/sct","code":"260385009","display":"Demo device type"}],"text":"Demo device type"}}
+{"resourceType":"DeviceDefinition","id":"812f4294-59b9-5010-9ea5-7721de154ce4","type":{"coding":[{"system":"http://snomed.info/sct","code":"260385009","display":"Demo device type"}],"text":"Demo device type"}}
+{"resourceType":"DeviceDefinition","id":"b84d3662-f9f8-5026-abbb-c693aa906a16","type":{"coding":[{"system":"http://snomed.info/sct","code":"260385009","display":"Demo device type"}],"text":"Demo device type"}}
+{"resourceType":"DeviceDefinition","id":"09691457-383c-5a9c-ada2-b1805f3f2943","type":{"coding":[{"system":"http://snomed.info/sct","code":"260385009","display":"Demo device type"}],"text":"Demo device type"}}

@@ -128,7 +128,97 @@ footer p { margin: 0.25rem 0; }
 
 .vertical-detail h1 { margin-top: 1rem; }
 .vertical-detail .description { color: var(--text-muted); }
+
+.preview-note {
+    background: var(--surface-2);
+    border: 1px solid var(--warning);
+    border-radius: 6px;
+    padding: 0.85rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+}
 .vertical-detail ul { background: var(--surface); padding: 1rem 1rem 1rem 2rem; border-radius: 6px; border: 1px solid var(--border); }
+
+/* Per-flow deployment choice on the detail page */
+.flow-intro { color: var(--text-muted); font-size: 0.95rem; margin: 0.25rem 0 1.25rem; }
+
+.flow-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.flow-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    transition: border-color 0.15s;
+}
+
+.flow-card:hover { border-color: var(--accent); }
+
+.flow-card h3 { margin: 0 0 0.35rem; font-size: 1.15rem; }
+
+.flow-tagline {
+    display: inline-block;
+    align-self: flex-start;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    margin-bottom: 0.75rem;
+}
+
+.flow-summary { color: var(--text-muted); font-size: 0.9rem; margin: 0 0 0.85rem; }
+
+.flow-card h4 {
+    margin: 0.5rem 0 0.4rem;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+}
+
+.flow-card ul.flow-deploys,
+.flow-card ul.flow-excludes {
+    background: none;
+    border: none;
+    padding: 0 0 0 1.2rem;
+    margin: 0 0 0.5rem;
+    font-size: 0.88rem;
+}
+
+.flow-card ul.flow-deploys li { margin-bottom: 0.25rem; }
+
+.flow-card ul.flow-excludes {
+    list-style: none;
+    padding-left: 0;
+}
+
+.flow-card ul.flow-excludes li {
+    color: var(--text-muted);
+    font-size: 0.83rem;
+    margin-bottom: 0.2rem;
+}
+
+.flow-card ul.flow-excludes li::before {
+    content: "\2014\00a0";
+    color: var(--text-muted);
+}
+
+.flow-card .cta-button {
+    margin-top: auto;
+    align-self: flex-start;
+    font-size: 0.92rem;
+    padding: 0.6rem 1.1rem;
+}
 
 .cta-button {
     display: inline-block;
@@ -197,6 +287,41 @@ footer p { margin: 0.25rem 0; }
 .config-form label.checkbox-label small {
     grid-column: 2;
 }
+
+/* Read-only chosen-flow banner (flow is picked on the detail page) */
+.config-form .chosen-flow {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 0.85rem 1rem;
+    background: var(--surface);
+}
+.config-form .chosen-flow-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+.config-form .chosen-flow-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+}
+.config-form .chosen-flow-text strong { font-size: 1.02rem; }
+.config-form .chosen-flow-text small { color: var(--text-muted); }
+.config-form .chosen-flow-change {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.88rem;
+    white-space: nowrap;
+    transition: color 120ms ease;
+}
+.config-form .chosen-flow-change:hover { color: var(--text); }
 
 .walkthrough-modal {
     background: var(--surface);

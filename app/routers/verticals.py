@@ -26,14 +26,24 @@ async def vertical_detail(request: Request, vertical_id: str):
 
 
 @router.get("/{vertical_id}/configure", response_class=HTMLResponse)
-async def configure_vertical(request: Request, vertical_id: str):
-    """Configuration form for deploying a vertical."""
+async def configure_vertical(request: Request, vertical_id: str, flow: str = "fhir"):
+    """Configuration form for deploying a vertical.
+
+    `flow` carries the deployment flow chosen on the detail page (healthcare:
+    'fhir' or 'sampledata') so the form opens with that option pre-selected.
+    """
     registry = request.app.state.registry
     vertical = registry.get(vertical_id)
     if not vertical:
         raise HTTPException(status_code=404, detail=f"Vertical '{vertical_id}' not found")
+    if not vertical.deployable:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Vertical '{vertical_id}' is a preview and not deployable yet.",
+        )
+    selected_flow = "sampledata" if flow == "sampledata" else "fhir"
     return templates.TemplateResponse(
         request,
         "configure.html",
-        {"vertical": vertical},
+        {"vertical": vertical, "selected_flow": selected_flow},
     )

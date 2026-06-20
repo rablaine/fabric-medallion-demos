@@ -1,0 +1,8 @@
+{"resourceType":"VerificationResult","id":"4b674183-14ed-5055-9227-c76244643d06","status":"validated","target":[{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"}]}
+{"resourceType":"VerificationResult","id":"d24d30e9-320c-578b-9b52-95552d73ca6e","status":"validated","target":[{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"}]}
+{"resourceType":"VerificationResult","id":"a44634e8-3f89-5b3e-bb69-b0b18f1a0d91","status":"validated","target":[{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"}]}
+{"resourceType":"VerificationResult","id":"64256678-5a4d-5656-8cab-43b96815ef38","status":"validated","target":[{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"}]}
+{"resourceType":"VerificationResult","id":"1ff5b344-58a9-5eb4-9aed-c6a03fa31a85","status":"validated","target":[{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"}]}
+{"resourceType":"VerificationResult","id":"3d76ca8a-e147-5eda-94d1-e72df0db264e","status":"validated","target":[{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"}]}
+{"resourceType":"VerificationResult","id":"b8aab678-f4ee-5092-b388-4d4425e472d1","status":"validated","target":[{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"}]}
+{"resourceType":"VerificationResult","id":"713097c4-0f80-564c-9654-a69115a5c72e","status":"validated","target":[{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"}]}

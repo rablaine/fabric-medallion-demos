@@ -1,0 +1,49 @@
+id: healthcare
+name: Healthcare
+description: 'A healthcare data estate on Microsoft Fabric''s Healthcare data solutions medallion (bronze / silver / gold), producing analytics-ready tables, semantic models, and Power BI reports. Choose how the clinical data gets in: a full FHIR ingestion pipeline, or a lighter assisted flow that uses Fabric''s built-in sample dataset.'
+status: available
+deployable: true
+# Healthcare ships two deployment flows. The detail page presents these as
+# distinct paths so what-gets-deployed is accurate per choice — the FHIR flow
+# stands up Azure Health Data Services + storage, the sample-data flow does not.
+flows:
+  - id: fhir
+    name: FHIR demo
+    tagline: Full FHIR ingestion path
+    summary: >-
+      Stands up Azure Health Data Services (FHIR R4) + storage + Fabric, seeds
+      synthetic patients, and wires the medallion over the FHIR $export. Shows
+      pulling your own data in through FHIR. One short manual portal step.
+    deploys:
+      - Azure Health Data Services workspace (Microsoft.HealthcareApis)
+      - FHIR Service (R4) seeded with Synthea synthetic patient bundles
+      - Azure Data Lake Storage Gen2 (FHIR $export landing container)
+      - Microsoft Fabric F8 capacity + workspace with Healthcare data solutions
+      - OneLake shortcut from the bronze lakehouse to the ADLS export container
+  - id: sampledata
+    name: Assisted sample-data demo
+    tagline: Lighter, no FHIR service
+    summary: >-
+      Skips Azure Health Data Services entirely. Sets up a resource group,
+      Fabric F8 capacity, workspace, and Healthcare data solutions item, then
+      walks you through deploying Data Foundations with the built-in sample
+      dataset and stages the curated clinical data into the medallion for you.
+    deploys:
+      - Microsoft Fabric F8 capacity + workspace
+      - Healthcare data solutions item (Data Foundations + built-in sample dataset)
+      - Curated clinical sample data staged into the medallion (bronze → silver)
+    excludes:
+      - 'No Azure Health Data Services / FHIR service'
+      - No Azure Data Lake Storage account
+azure_services:
+  - Azure Health Data Services workspace (Microsoft.HealthcareApis)
+  - FHIR Service (R4) seeded with Synthea synthetic patient bundles
+  - Azure Data Lake Storage Gen2 (FHIR $export landing container)
+  - Microsoft Fabric capacity + workspace with Healthcare data solutions (FHIR ingestion → bronze / silver / gold medallion)
+  - OneLake shortcut from the Fabric lakehouse to the ADLS export container
+executive_kpis:
+  - Patient population by age band, sex, and condition
+  - Encounter volume and type over time
+  - Most common conditions, procedures, and medications
+  - Observation trends (vitals, labs) across the cohort
+  - Care gaps and cohort segmentation from FHIR resources

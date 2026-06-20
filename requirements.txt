@@ -11,5 +11,9 @@ azure-identity
 azure-mgmt-resource
 msal
 
+# Telemetry (download/adoption tracking → Application Insights)
+azure-monitor-opentelemetry
+azure-monitor-events-extension
+
 # Data generation
 faker

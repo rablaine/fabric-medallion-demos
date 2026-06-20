@@ -1,0 +1,8 @@
+{"resourceType":"DeviceMetric","id":"04ba0856-69f4-5dbe-b746-66a86388c3eb","type":{"coding":[{"system":"http://loinc.org","code":"8867-4","display":"Heart rate"}],"text":"Heart rate"},"category":"measurement"}
+{"resourceType":"DeviceMetric","id":"5fd3aec5-e066-501b-9894-6cdec5d7625d","type":{"coding":[{"system":"http://loinc.org","code":"8867-4","display":"Heart rate"}],"text":"Heart rate"},"category":"measurement"}
+{"resourceType":"DeviceMetric","id":"c8a1efbd-d5c1-547f-ae64-cbb364ec7f2b","type":{"coding":[{"system":"http://loinc.org","code":"8867-4","display":"Heart rate"}],"text":"Heart rate"},"category":"measurement"}
+{"resourceType":"DeviceMetric","id":"a9620cee-a6bf-5d84-8ffd-123888d333ae","type":{"coding":[{"system":"http://loinc.org","code":"8867-4","display":"Heart rate"}],"text":"Heart rate"},"category":"measurement"}
+{"resourceType":"DeviceMetric","id":"d9938757-1a36-5a2f-98f9-7b268b3daaeb","type":{"coding":[{"system":"http://loinc.org","code":"8867-4","display":"Heart rate"}],"text":"Heart rate"},"category":"measurement"}
+{"resourceType":"DeviceMetric","id":"d5549932-25b7-52c3-bdd3-d355361e084b","type":{"coding":[{"system":"http://loinc.org","code":"8867-4","display":"Heart rate"}],"text":"Heart rate"},"category":"measurement"}
+{"resourceType":"DeviceMetric","id":"70aa69cd-c90b-5153-b336-5e26e2d2383c","type":{"coding":[{"system":"http://loinc.org","code":"8867-4","display":"Heart rate"}],"text":"Heart rate"},"category":"measurement"}
+{"resourceType":"DeviceMetric","id":"ec937bd8-7d0c-5616-bb80-bccce0983de9","type":{"coding":[{"system":"http://loinc.org","code":"8867-4","display":"Heart rate"}],"text":"Heart rate"},"category":"measurement"}

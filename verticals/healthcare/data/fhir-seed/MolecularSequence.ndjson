@@ -1,0 +1,8 @@
+{"resourceType":"MolecularSequence","id":"20d41b46-d1fd-5bb1-97dd-bcd456700ea7","coordinateSystem":0,"patient":{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"}}
+{"resourceType":"MolecularSequence","id":"c0360949-af8c-597c-a008-c3cdebdd5e56","coordinateSystem":0,"patient":{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"}}
+{"resourceType":"MolecularSequence","id":"809de1e0-a4f2-58d1-bd07-d5fb4ac1f6a1","coordinateSystem":0,"patient":{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"}}
+{"resourceType":"MolecularSequence","id":"84e49f69-edc2-539c-9f26-a920202bf2e5","coordinateSystem":0,"patient":{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"}}
+{"resourceType":"MolecularSequence","id":"1f171194-204d-5237-adbc-cea7324ff63f","coordinateSystem":0,"patient":{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"}}
+{"resourceType":"MolecularSequence","id":"980d05c8-1433-5889-b18e-ecc3a01d7175","coordinateSystem":0,"patient":{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"}}
+{"resourceType":"MolecularSequence","id":"33c7793f-8272-5678-8167-1aa6610dd604","coordinateSystem":0,"patient":{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"}}
+{"resourceType":"MolecularSequence","id":"2dc3009a-eebb-5294-9967-a87e7538cf1e","coordinateSystem":0,"patient":{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"}}

@@ -1,0 +1,8 @@
+{"resourceType":"Appointment","id":"46f6e77b-b144-527b-b0c9-cbc4b87be197","status":"booked","participant":[{"status":"accepted","actor":{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"}}]}
+{"resourceType":"Appointment","id":"e4facb05-79fd-59d3-8db5-fcba06b32626","status":"booked","participant":[{"status":"accepted","actor":{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"}}]}
+{"resourceType":"Appointment","id":"c83dfe4a-9d34-5f90-811e-6602ba1ae231","status":"booked","participant":[{"status":"accepted","actor":{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"}}]}
+{"resourceType":"Appointment","id":"5238f89f-0eab-5514-8636-b40c72e01afd","status":"booked","participant":[{"status":"accepted","actor":{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"}}]}
+{"resourceType":"Appointment","id":"e0c8a1f3-0d8d-5286-aa20-0e89ace572de","status":"booked","participant":[{"status":"accepted","actor":{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"}}]}
+{"resourceType":"Appointment","id":"e3a658d2-9157-5b7b-bc50-ceccb102d729","status":"booked","participant":[{"status":"accepted","actor":{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"}}]}
+{"resourceType":"Appointment","id":"2d249d47-cadc-5942-9b44-aafbb9f84d21","status":"booked","participant":[{"status":"accepted","actor":{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"}}]}
+{"resourceType":"Appointment","id":"7926e5fd-a08d-53ef-8e76-a50252a0d42f","status":"booked","participant":[{"status":"accepted","actor":{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"}}]}

@@ -1,0 +1,8 @@
+{"resourceType":"Communication","id":"bdfbe674-9757-5b75-a117-7aebf544a4e5","status":"completed","subject":{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"}}
+{"resourceType":"Communication","id":"c877ad84-85b6-5c6b-aec9-eba5ae2565b3","status":"completed","subject":{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"}}
+{"resourceType":"Communication","id":"f2ab4776-d034-5a43-ba32-8bf0c88d2351","status":"completed","subject":{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"}}
+{"resourceType":"Communication","id":"506469ce-e910-54f2-83ac-8194e9098574","status":"completed","subject":{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"}}
+{"resourceType":"Communication","id":"c416e911-a5fd-5e3a-87d5-17b382e5de33","status":"completed","subject":{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"}}
+{"resourceType":"Communication","id":"90e4a5b5-4930-5036-aacc-4d1cefa78653","status":"completed","subject":{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"}}
+{"resourceType":"Communication","id":"0269238d-fdfa-5e44-b9d5-73aca5e1dcfa","status":"completed","subject":{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"}}
+{"resourceType":"Communication","id":"403755e6-1920-56fd-b31f-88cfb1abda89","status":"completed","subject":{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"}}

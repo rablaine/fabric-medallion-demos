@@ -1,0 +1,8 @@
+{"resourceType":"RelatedPerson","id":"5ac4a236-09c3-54c4-bc78-6b7f9d51fbbf","patient":{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"},"name":[{"family":"Demo","given":["Relative"]}]}
+{"resourceType":"RelatedPerson","id":"6009c965-ebb7-5c9c-baf7-1e4e5fa822fa","patient":{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"},"name":[{"family":"Demo","given":["Relative"]}]}
+{"resourceType":"RelatedPerson","id":"720893c7-022f-5b09-9902-80edacee04ec","patient":{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"},"name":[{"family":"Demo","given":["Relative"]}]}
+{"resourceType":"RelatedPerson","id":"af59b007-da05-5c7d-b5b0-950fb8219d3f","patient":{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"},"name":[{"family":"Demo","given":["Relative"]}]}
+{"resourceType":"RelatedPerson","id":"f1b49903-c70e-5c2a-a32b-2c253f9aaacd","patient":{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"},"name":[{"family":"Demo","given":["Relative"]}]}
+{"resourceType":"RelatedPerson","id":"10f2cc02-ea37-53c0-b9ec-739652c6c9ba","patient":{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"},"name":[{"family":"Demo","given":["Relative"]}]}
+{"resourceType":"RelatedPerson","id":"e10c02c7-a089-5f5c-9639-b53152492e5e","patient":{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"},"name":[{"family":"Demo","given":["Relative"]}]}
+{"resourceType":"RelatedPerson","id":"a1cb8247-35ae-5ff3-9be2-93f54c4ee606","patient":{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"},"name":[{"family":"Demo","given":["Relative"]}]}

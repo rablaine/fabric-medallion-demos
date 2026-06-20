@@ -1,0 +1,8 @@
+{"resourceType":"EnrollmentRequest","id":"bbef3944-2a92-5435-a95f-dc6de979a9ec","status":"active","candidate":{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"}}
+{"resourceType":"EnrollmentRequest","id":"4db8ebce-74e7-5c0f-98ff-055bff0a4c45","status":"active","candidate":{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"}}
+{"resourceType":"EnrollmentRequest","id":"7250b111-e3f8-5c1b-9aef-65b829b4e080","status":"active","candidate":{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"}}
+{"resourceType":"EnrollmentRequest","id":"e2cba3c9-3530-5f69-8fc3-8ef9eb96b63a","status":"active","candidate":{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"}}
+{"resourceType":"EnrollmentRequest","id":"83546223-a430-5f6d-a7bc-396fd3eeb072","status":"active","candidate":{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"}}
+{"resourceType":"EnrollmentRequest","id":"213d065f-036e-5f7f-8e1e-f0cebe7fc890","status":"active","candidate":{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"}}
+{"resourceType":"EnrollmentRequest","id":"a2ccc320-9df0-5c57-b617-27cd4a7495a0","status":"active","candidate":{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"}}
+{"resourceType":"EnrollmentRequest","id":"04b6e823-89ad-53df-93b0-cbaf7a52b789","status":"active","candidate":{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"}}

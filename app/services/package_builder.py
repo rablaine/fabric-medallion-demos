@@ -68,6 +68,9 @@ class PackageBuilder:
             f"RESOURCE_PREFIX={config['resource_prefix']}",
             f"AUTO_RUN_INITIAL_LOAD={'true' if config.get('auto_run_initial_load') else 'false'}",
             f"DEPLOY_PURVIEW={'true' if config.get('deploy_purview') else 'false'}",
+            # Flow selector read by deploy.cmd (healthcare): 'sampledata' runs the
+            # assisted sample-data flow, anything else runs the FHIR-first flow.
+            f"DEPLOY_MODE={config.get('deploy_mode', 'fhir')}",
         ]
         (staging / "deployment.config").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

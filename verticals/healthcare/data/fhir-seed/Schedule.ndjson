@@ -1,0 +1,8 @@
+{"resourceType":"Schedule","id":"00ae292e-eb51-5fa5-9eb8-682c94add002","actor":[{"reference":"Practitioner/4d4fbda4-82ba-33b6-8250-5891123066e5"}]}
+{"resourceType":"Schedule","id":"ea027d63-9d3e-5f7e-9a5e-381849078e8b","actor":[{"reference":"Practitioner/42b58120-5db6-3df8-9022-17de94d1be74"}]}
+{"resourceType":"Schedule","id":"de5bc0b0-b47b-5c7f-8d99-840a92f043ff","actor":[{"reference":"Practitioner/bbcffa02-1441-3377-a64f-2e441a1a808a"}]}
+{"resourceType":"Schedule","id":"9980ebf7-59d6-5df1-aa4d-56753963ed38","actor":[{"reference":"Practitioner/4d3fc4bb-6809-3cd3-8e16-39645e45f96d"}]}
+{"resourceType":"Schedule","id":"abc81f57-99e6-503a-a3be-376e2832afb6","actor":[{"reference":"Practitioner/4a09d78d-80c6-3a11-aca2-772c651b10b0"}]}
+{"resourceType":"Schedule","id":"663089e5-3c0a-521c-abc4-71e64350e7f6","actor":[{"reference":"Practitioner/5c925360-6f42-33d2-863a-2027a196ac13"}]}
+{"resourceType":"Schedule","id":"ddad8396-7995-5669-adde-25b4292bc255","actor":[{"reference":"Practitioner/e8490ac6-d676-30cd-a4b6-dd1ba8e89e8e"}]}
+{"resourceType":"Schedule","id":"d50674c4-506b-5f9e-a5c0-9a368ef40a91","actor":[{"reference":"Practitioner/b38ed16e-2594-379a-a07b-e5252c07c08c"}]}

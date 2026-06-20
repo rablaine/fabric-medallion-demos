@@ -3,6 +3,336 @@
 {% block title %}Configure {{ vertical.name }} &mdash; Fabric Data Estate Builder{% endblock %}
 
 {% block content %}
+{% if vertical.id == 'healthcare' %}
+<section class="configure">
+    <h1>Configure the {{ vertical.name }} Data Estate</h1>
+    <p>Set your deployment parameters, then download a customized package that you can run with your own Azure CLI credentials.</p>
+
+    <form method="post" action="/deploy/{{ vertical.id }}/package" class="config-form">
+        <input type="hidden" name="deploy_mode" value="{{ selected_flow }}">
+        <div class="chosen-flow">
+            <div class="chosen-flow-text">
+                <span class="chosen-flow-label">Deployment flow</span>
+                {% if selected_flow == 'sampledata' %}
+                <strong>Assisted sample-data demo</strong>
+                <small>Skips Azure Health Data Services entirely. Sets up a
+                Fabric F8 capacity, workspace, and Healthcare data solutions item,
+                walks you through Data Foundations <em>with the built-in sample
+                dataset</em>, then stages the curated clinical data and (optionally)
+                kicks off ingestion.</small>
+                {% else %}
+                <strong>FHIR demo</strong>
+                <small>Stands up Azure Health Data Services (FHIR R4) + storage +
+                Fabric, seeds synthetic patients, and wires the medallion over the
+                FHIR <code>$export</code>. One short manual portal step. ~20 min.</small>
+                {% endif %}
+            </div>
+            <a href="/verticals/{{ vertical.id }}" class="chosen-flow-change">&larr; Change flow</a>
+        </div>
+
+        <label>
+            Resource Group Name
+            <input type="text" name="resource_group" value="rg-contoso-{{ vertical.id }}" required>
+            <small>Will be created if it doesn't exist.</small>
+        </label>
+
+        <!-- Region is fixed: it must support Azure Health Data Services (not
+             offered in East US / East US 2) AND have Microsoft Fabric capacity
+             quota. West US 3 satisfies both. No region picker on purpose. -->
+        <input type="hidden" name="location" value="westus3">
+        <label class="readonly-field">
+            Azure Region
+            <input type="text" value="West US 3 (fixed)" disabled>
+            {% if selected_flow == 'sampledata' %}
+            <small>Fixed to a region with Microsoft Fabric F8 capacity quota.
+            Kept consistent with the FHIR flow, so the region isn't selectable
+            for this vertical.</small>
+            {% else %}
+            <small>Fixed to a region that supports Azure Health Data Services
+            (FHIR R4) and Microsoft Fabric F8 capacity. AHDS isn't offered in
+            East US / East US 2, so the region isn't selectable for this vertical.</small>
+            {% endif %}
+        </label>
+
+        <label>
+            Resource Name Prefix
+            <input type="text" name="resource_prefix" value="contoso" required pattern="[a-z0-9]+" maxlength="12">
+            <small>Lowercase letters and numbers only. Max 12 chars.</small>
+        </label>
+
+        <div class="form-actions">
+            <button type="submit" class="cta-button">Download Deployment Package</button>
+            <button type="button" class="help-button" aria-label="What you'll get"
+                    onclick="openWalkthrough()">?</button>
+        </div>
+    </form>
+
+    <dialog id="walkthrough-modal" class="walkthrough-modal">
+        <button type="button" class="walkthrough-close" aria-label="Close" onclick="closeWalkthrough()">&times;</button>
+        <h2>What <code>deploy.cmd</code> does, step by step</h2>
+        <p>
+            You fill in the form above, click <em>Download Deployment Package</em>,
+            and get a zip with your settings baked in. Inside the zip is
+            <code>deploy.cmd</code>. Running it prompts for your Azure account +
+            subscription, then deploys an end-to-end FHIR-to-Fabric healthcare
+            data estate. One step is interactive: Microsoft's Healthcare data
+            solutions <em>foundations</em> can only be deployed from the Fabric
+            portal, so the script pauses and walks you through it, then finishes
+            the wiring for you.
+        </p>
+
+        <details class="deploy-step">
+            <summary>Stand up Azure Health Data Services + storage + Fabric capacity</summary>
+            <div class="deploy-step-body">
+                <p>Bicep creates everything in your subscription (West US 3):</p>
+                <ul>
+                    <li>Resource group</li>
+                    <li><strong>ADLS Gen2</strong> storage account with a <code>fhirexport</code> container (the FHIR <code>$export</code> landing zone)</li>
+                    <li><strong>Azure Health Data Services</strong> workspace + <strong>FHIR Service (R4)</strong> with a system-assigned identity and import/export configured</li>
+                    <li><strong>Microsoft Fabric F8 capacity</strong> with you assigned as admin</li>
+                </ul>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>Seed the FHIR service and export to the lake</summary>
+            <div class="deploy-step-body">
+                <ul>
+                    <li>Uploads the baked-in synthetic FHIR NDJSON seed (Synthea patients, 100+ resource types) to blob storage</li>
+                    <li>Runs a server-side bulk <code>$import</code> to populate the FHIR service</li>
+                    <li>Runs a bulk <code>$export</code> so the FHIR resources land as NDJSON in the <code>fhirexport</code> container &mdash; the source for Fabric</li>
+                </ul>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>Create the Fabric workspace + Healthcare data solutions item</summary>
+            <div class="deploy-step-body">
+                <ul>
+                    <li>Creates a Fabric <strong>workspace</strong> bound to the F8 capacity</li>
+                    <li>Creates the <strong>Healthcare data solutions</strong> item via the Fabric REST API</li>
+                </ul>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>Pause: you deploy Data Foundations in the portal (~5 min)</summary>
+            <div class="deploy-step-body">
+                <p>
+                    Healthcare data foundations can only be deployed from the
+                    Fabric portal (no REST API exists). The script gives you the
+                    direct workspace link and waits. In the portal you open the
+                    Healthcare data solutions item, run <strong>Setup your
+                    solution</strong> &rarr; <strong>Data Foundations</strong>
+                    &rarr; <strong>Review &amp; Deploy</strong>. That provisions
+                    the bronze / silver / gold lakehouses, the Spark environment,
+                    the ingestion notebooks, and the clinical data foundation
+                    pipeline. When it finishes, you come back to the terminal and
+                    press Enter.
+                </p>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>The script wires up the shortcut, config, and notebook fix</summary>
+            <div class="deploy-step-body">
+                <p>Once foundations exists, several pieces have to be connected so ingestion can actually find and process the FHIR data. The script does these for you (and prints manual instructions if any can't run unattended):</p>
+                <ul>
+                    <li>Provisions the Fabric <strong>workspace identity</strong> and grants it <em>Storage Blob Data Reader</em> on the export storage account</li>
+                    <li>Creates a cloud <strong>connection</strong> to the ADLS Gen2 storage (workspace-identity auth) for the shortcut to use</li>
+                    <li>Creates a <strong>OneLake shortcut</strong> in the <strong>bronze lakehouse</strong>, placed <em>inside</em> the <code>Files/External/Clinical/FHIR-NDJSON/AHDS-FHIR</code> folder that foundations provisions, pointing at the <code>fhirexport</code> container &mdash; this is where HDS ingestion looks for incoming NDJSON</li>
+                    <li><strong>Repoints the ingestion config:</strong> foundations ships <code>deploymentParametersConfiguration.json</code> (in the admin lakehouse under <code>Files/system-configurations</code>) with the FHIR source path defaulted to <code>Files/Process/&hellip;</code>. Since the shortcut lands the data under <code>Files/External/&hellip;</code>, the source path pattern is switched from <strong>Process</strong> to <strong>External</strong> so ingestion reads the right folder</li>
+                    <li><strong>Patches the config notebook (scipy fix):</strong> the foundations Spark environment ships a <code>scipy</code> version skew (new Python files over an older compiled binary) that breaks <code>from scipy.spatial.transform import Rotation</code> &mdash; a dependency of the HDS transform library. A small repair cell is injected that reinstalls <code>scipy</code> in-session so the ingestion notebooks run cleanly. <em>(Best-effort workaround until Microsoft ships a platform fix.)</em></li>
+                    <li>Offers to <strong>kick off the clinical data foundation ingestion pipeline</strong> now (bronze &rarr; silver), or hands you the link to run it yourself from Fabric</li>
+                </ul>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>What it costs to run</summary>
+            <div class="deploy-step-body">
+                <p>Rough US list pricing, mid-2026. Ballpark &mdash; depends on region, idle time, and usage.</p>
+                <table class="price-table">
+                    <thead>
+                        <tr><th>Resource</th><th>SKU</th><th>If you leave it running 24/7</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Microsoft Fabric capacity</strong></td>
+                            <td>F8 (pay-as-you-go)</td>
+                            <td>~$1.05/hr &rarr; ~$770/month <em>(pause when idle to drop to ~$0)</em></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Azure Health Data Services</strong></td>
+                            <td>FHIR Service (R4), pay-as-you-go</td>
+                            <td>Low single digits/month at demo data volume + a few cents per <code>$import</code>/<code>$export</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>ADLS Gen2 storage</strong></td>
+                            <td>Standard_LRS, ~10&ndash;50 MB seed/export</td>
+                            <td>&lt; <strong>$1/month</strong></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p>
+                    <strong>Realistic total:</strong> pause the F8 capacity when
+                    you're not demoing and the whole estate is a few dollars a
+                    month. Leave F8 on 24/7 and add ~$770/month for the capacity.
+                    Run <code>teardown.cmd</code> when you're done to drop it to $0.
+                </p>
+            </div>
+        </details>
+
+        <h3>When it's done</h3>
+        <p>
+            Open <a href="https://app.fabric.microsoft.com" target="_blank" rel="noopener">Fabric</a>,
+            browse the workspace, and explore the silver healthcare data model
+            (FHIR resources flattened into tabular tables) ready for semantic
+            models and Power BI reports.
+        </p>
+        <p>
+            <em>When you're done, run <code>teardown.cmd</code> from the same package and it'll delete the Fabric workspace and then the resource group (which holds the F8 capacity, AHDS, and storage).</em>
+        </p>
+    </dialog>
+
+    <dialog id="sampledata-modal" class="walkthrough-modal">
+        <button type="button" class="walkthrough-close" aria-label="Close" onclick="closeWalkthrough()">&times;</button>
+        <h2>What the assisted sample-data flow does, step by step</h2>
+        <p>
+            You fill in the form above, choose <em>Assisted sample-data demo</em>,
+            and download the zip. Inside, <code>deploy.cmd</code> runs the assisted
+            flow (<code>deploy-sampledata.ps1</code>). It does NOT deploy Azure
+            Health Data Services or any FHIR service &mdash; the demo data comes
+            from Fabric's built-in Healthcare data solutions <em>sample dataset</em>,
+            which the script stages into the medallion the way the docs intend.
+        </p>
+
+        <details class="deploy-step">
+            <summary>Stand up the resource group + Fabric capacity</summary>
+            <div class="deploy-step-body">
+                <p>Bicep creates just what's needed in your subscription (West US 3):</p>
+                <ul>
+                    <li>Resource group</li>
+                    <li><strong>Microsoft Fabric F8 capacity</strong> with you assigned as admin</li>
+                </ul>
+                <p>No storage account, no Azure Health Data Services, no FHIR service.</p>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>Create the Fabric workspace + Healthcare data solutions item</summary>
+            <div class="deploy-step-body">
+                <ul>
+                    <li>Creates a Fabric <strong>workspace</strong> bound to the F8 capacity</li>
+                    <li>Creates the <strong>Healthcare data solutions</strong> item via the Fabric REST API</li>
+                </ul>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>Pause: you deploy Data Foundations <em>with sample data</em> (~5 min)</summary>
+            <div class="deploy-step-body">
+                <p>
+                    The script gives you the direct workspace link and waits. In the
+                    portal you open the Healthcare data solutions item, run
+                    <strong>Setup your solution</strong> &rarr; <strong>Data
+                    Foundations</strong>, and &mdash; unlike the FHIR flow &mdash;
+                    <strong>check the &ldquo;Sample data&rdquo; box</strong> so the
+                    built-in synthetic dataset (51K synthetic patients) loads. Then
+                    <strong>Review &amp; Deploy</strong>. When it finishes, you come
+                    back to the terminal and press Enter.
+                </p>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>The script stages the data, fixes the runtime, and (optionally) ingests</summary>
+            <div class="deploy-step-body">
+                <p>Once foundations + sample data exist, the script:</p>
+                <ul>
+                    <li><strong>Stages the curated clinical files</strong> from the lakehouse
+                        <code>Files/SampleData/Clinical/FHIR-NDJSON/FHIR-HDS</code> folder into
+                        <code>Files/Ingest/Clinical/FHIR-NDJSON/FHIR-HDS</code>. Staging into
+                        <em>Ingest</em> (not pointing the pipeline at SampleData) is what lets HDS
+                        derive the <code>sourceSystem</code> from the namespace folder during the
+                        raw&rarr;process move &mdash; the by-the-book happy path. A curated resource
+                        list is used so the one bad shipped file (RiskAssessment, missing
+                        <code>meta.lastUpdated</code>) is left out and bronze validation stays clean.</li>
+                    <li><strong>Patches the config notebook (scipy fix):</strong> injects a repair
+                        cell that reinstalls <code>scipy</code> in-session, working around the
+                        Fabric Runtime 1.3 HDS environment's version skew. <em>(Best-effort
+                        workaround until Microsoft ships a platform fix.)</em></li>
+                    <li>Waits for the Spark environment to finish publishing, then offers to
+                        <strong>kick off the clinical data foundation ingestion pipeline</strong>
+                        (bronze &rarr; silver), or hands you the link to run it yourself.</li>
+                </ul>
+            </div>
+        </details>
+
+        <details class="deploy-step">
+            <summary>What it costs to run</summary>
+            <div class="deploy-step-body">
+                <p>Rough US list pricing, mid-2026. The only paid resource is the Fabric capacity.</p>
+                <table class="price-table">
+                    <thead>
+                        <tr><th>Resource</th><th>SKU</th><th>If you leave it running 24/7</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Microsoft Fabric capacity</strong></td>
+                            <td>F8 (pay-as-you-go)</td>
+                            <td>~$1.05/hr &rarr; ~$770/month <em>(pause when idle to drop to ~$0)</em></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p>
+                    Pause the F8 capacity when you're not demoing and it's a few
+                    dollars a month. Run <code>teardown.cmd</code> when you're done
+                    to drop it to $0.
+                </p>
+            </div>
+        </details>
+
+        <h3>When it's done</h3>
+        <p>
+            Open <a href="https://app.fabric.microsoft.com" target="_blank" rel="noopener">Fabric</a>,
+            browse the workspace, and explore the silver healthcare data model
+            (FHIR resources flattened into tabular tables) ready for semantic
+            models and Power BI reports.
+        </p>
+        <p>
+            <em>When you're done, run <code>teardown.cmd</code> from the same package and it'll delete the Fabric workspace and then the resource group (which holds the F8 capacity).</em>
+        </p>
+    </dialog>
+
+    <script>
+        const walkthroughModal = document.getElementById('walkthrough-modal');
+        const sampledataModal = document.getElementById('sampledata-modal');
+
+        function selectedFlow() {
+            const input = document.querySelector('input[name="deploy_mode"]');
+            return input && input.value === 'sampledata' ? 'sampledata' : 'fhir';
+        }
+        function activeModal() {
+            return selectedFlow() === 'sampledata' ? sampledataModal : walkthroughModal;
+        }
+        function openWalkthrough() { activeModal().showModal(); }
+        function closeWalkthrough() {
+            const m = document.querySelector('dialog.walkthrough-modal[open]') || activeModal();
+            m.classList.add('closing');
+            m.addEventListener('animationend', () => {
+                m.classList.remove('closing');
+                m.close();
+            }, { once: true });
+        }
+
+        [walkthroughModal, sampledataModal].forEach((m) => {
+            m.addEventListener('click', (e) => { if (e.target === m) closeWalkthrough(); });
+            m.addEventListener('cancel', (e) => { e.preventDefault(); closeWalkthrough(); });
+        });
+    </script>
+</section>
+{% else %}
 <section class="configure">
     <h1>Configure the {{ vertical.name }} Data Estate</h1>
     <p>Set your deployment parameters, then download a customized package that you can run with your own Azure CLI credentials.</p>
@@ -295,4 +625,5 @@
         syncAutoRunFromPurview();
     </script>
 </section>
+{% endif %}
 {% endblock %}

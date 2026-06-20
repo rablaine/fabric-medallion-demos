@@ -1,0 +1,8 @@
+{"resourceType":"ChargeItemDefinition","id":"c6dfe8b8-9639-560f-bc2d-ad8b3e15c43f","url":"http://contoso.health/cid/0","status":"active"}
+{"resourceType":"ChargeItemDefinition","id":"873f7be3-e27b-5f15-bcb5-00172628c36c","url":"http://contoso.health/cid/1","status":"active"}
+{"resourceType":"ChargeItemDefinition","id":"3b1c61b8-1882-58a8-8ae3-85b05cf554f4","url":"http://contoso.health/cid/2","status":"active"}
+{"resourceType":"ChargeItemDefinition","id":"eef5f31a-acfc-572f-903b-5bc6cc74bab6","url":"http://contoso.health/cid/3","status":"active"}
+{"resourceType":"ChargeItemDefinition","id":"e783f9c4-ed50-5eb4-9ee9-4e22c11f7060","url":"http://contoso.health/cid/4","status":"active"}
+{"resourceType":"ChargeItemDefinition","id":"3bfb984f-2961-5e24-9d1c-9b590eb8de00","url":"http://contoso.health/cid/5","status":"active"}
+{"resourceType":"ChargeItemDefinition","id":"7516529d-a10b-57ec-8009-f4fa2d7feb4f","url":"http://contoso.health/cid/6","status":"active"}
+{"resourceType":"ChargeItemDefinition","id":"7f4b0a23-dff9-542c-90be-cc37dcc09cb1","url":"http://contoso.health/cid/7","status":"active"}

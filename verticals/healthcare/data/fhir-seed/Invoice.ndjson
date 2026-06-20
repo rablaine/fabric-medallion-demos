@@ -1,0 +1,8 @@
+{"resourceType":"Invoice","id":"9ca5d877-88f5-520f-b20a-1bce2e7fe21a","status":"issued","subject":{"reference":"Patient/188a08a1-d4e7-d5d1-3fb9-67cd4cb30130"}}
+{"resourceType":"Invoice","id":"78cbdcb4-bf5d-5c5d-b52b-f8fd144b6d71","status":"issued","subject":{"reference":"Patient/b45ac405-022c-04f8-663b-5e5427e4ab7f"}}
+{"resourceType":"Invoice","id":"f2826faa-9067-5174-b1f2-5d98d9f6e890","status":"issued","subject":{"reference":"Patient/e58580f0-9f51-8db5-250e-558069d1de03"}}
+{"resourceType":"Invoice","id":"821bb951-8fa8-5ae0-ab51-df2447bb6a49","status":"issued","subject":{"reference":"Patient/6f8dac68-9750-12bb-b2e8-49dd30f08ccb"}}
+{"resourceType":"Invoice","id":"f1ed8ee9-9c25-558f-8943-578686f8cd85","status":"issued","subject":{"reference":"Patient/e2671843-9a01-099e-e253-3b2fa5e1b38b"}}
+{"resourceType":"Invoice","id":"60c57ba4-0f55-5374-998d-1d8b49e96ec9","status":"issued","subject":{"reference":"Patient/c60d8094-ba7c-51a6-07b0-2e0e0ce9fb52"}}
+{"resourceType":"Invoice","id":"0d6e0f7c-3196-5038-9197-2bb681977090","status":"issued","subject":{"reference":"Patient/9e299288-71e6-993a-7b75-d972ae517563"}}
+{"resourceType":"Invoice","id":"246c0f18-2ecb-5156-b76e-11105d58631e","status":"issued","subject":{"reference":"Patient/1c68a5e1-98c6-30a5-883a-db0a30be8258"}}

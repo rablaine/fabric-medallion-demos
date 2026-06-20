@@ -1,0 +1,8 @@
+{"resourceType":"MeasureReport","id":"a9ed73af-48ec-5936-be87-57522b48c047","status":"complete","type":"summary","measure":"http://contoso.health/Measure/demo","period":{"start":"2024-01-15","end":"2024-01-15"}}
+{"resourceType":"MeasureReport","id":"2c965265-7797-5783-b199-d53e6af786e9","status":"complete","type":"summary","measure":"http://contoso.health/Measure/demo","period":{"start":"2024-01-15","end":"2024-01-15"}}
+{"resourceType":"MeasureReport","id":"04b9f6ac-e228-5ddc-ac8c-308050d000b5","status":"complete","type":"summary","measure":"http://contoso.health/Measure/demo","period":{"start":"2024-01-15","end":"2024-01-15"}}
+{"resourceType":"MeasureReport","id":"882c0531-f822-5f89-a152-4b6aad0c9eed","status":"complete","type":"summary","measure":"http://contoso.health/Measure/demo","period":{"start":"2024-01-15","end":"2024-01-15"}}
+{"resourceType":"MeasureReport","id":"d6712162-373e-547a-85fd-12e1ccabb75a","status":"complete","type":"summary","measure":"http://contoso.health/Measure/demo","period":{"start":"2024-01-15","end":"2024-01-15"}}
+{"resourceType":"MeasureReport","id":"ea6353b7-4b62-533c-948f-d04f705b7d4a","status":"complete","type":"summary","measure":"http://contoso.health/Measure/demo","period":{"start":"2024-01-15","end":"2024-01-15"}}
+{"resourceType":"MeasureReport","id":"6852140a-7ce9-5fc8-a2ac-4386a41bacd4","status":"complete","type":"summary","measure":"http://contoso.health/Measure/demo","period":{"start":"2024-01-15","end":"2024-01-15"}}
+{"resourceType":"MeasureReport","id":"61be5253-72af-53d1-80f5-b2ea77840d95","status":"complete","type":"summary","measure":"http://contoso.health/Measure/demo","period":{"start":"2024-01-15","end":"2024-01-15"}}

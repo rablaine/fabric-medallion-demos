@@ -1,0 +1,8 @@
+{"resourceType":"EventDefinition","id":"26756d1d-0f96-5765-b8f2-332517b19555","status":"active","trigger":[{"type":"named-event","name":"demo-event"}]}
+{"resourceType":"EventDefinition","id":"e79861e3-c4f9-55be-9f0d-0289b41f02bc","status":"active","trigger":[{"type":"named-event","name":"demo-event"}]}
+{"resourceType":"EventDefinition","id":"ae953c41-030f-57a9-8ed8-2f8fa1fffefe","status":"active","trigger":[{"type":"named-event","name":"demo-event"}]}
+{"resourceType":"EventDefinition","id":"5e8920cc-8142-5b06-9390-12b4b0cc2bbb","status":"active","trigger":[{"type":"named-event","name":"demo-event"}]}
+{"resourceType":"EventDefinition","id":"5494bc28-7ff8-55ca-be7d-de382cdbc3ac","status":"active","trigger":[{"type":"named-event","name":"demo-event"}]}
+{"resourceType":"EventDefinition","id":"422dd461-274a-5e7d-b59a-218b637ac3cc","status":"active","trigger":[{"type":"named-event","name":"demo-event"}]}
+{"resourceType":"EventDefinition","id":"2bcc75eb-1172-594f-8c51-bb27c99814ec","status":"active","trigger":[{"type":"named-event","name":"demo-event"}]}
+{"resourceType":"EventDefinition","id":"92e78876-c219-57a2-b276-53e59a72ad08","status":"active","trigger":[{"type":"named-event","name":"demo-event"}]}

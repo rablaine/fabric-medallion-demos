@@ -1,0 +1,8 @@
+{"resourceType":"ResearchDefinition","id":"d9355d38-e9c2-5142-b0ab-45c7947d495c","status":"active","population":{"reference":"ResearchElementDefinition/45c8e00d-d237-5601-9d8f-c92b2d63b8ea"}}
+{"resourceType":"ResearchDefinition","id":"e7b4bb67-d444-59df-a1c8-99f9b0c941a0","status":"active","population":{"reference":"ResearchElementDefinition/c33202e7-334d-5bd7-98ad-4c04cf71f7e1"}}
+{"resourceType":"ResearchDefinition","id":"c5c80182-21d5-50af-9d9a-6e4d3945dd0b","status":"active","population":{"reference":"ResearchElementDefinition/5ff5ac7d-1d5c-5a84-887f-66aad45ad6cf"}}
+{"resourceType":"ResearchDefinition","id":"259b50d5-d930-582d-a2b2-7721dcbe2001","status":"active","population":{"reference":"ResearchElementDefinition/6c1f7581-589f-505f-9ab7-d3b167e1bdc6"}}
+{"resourceType":"ResearchDefinition","id":"22913a42-4d7f-5fdf-b973-c423e792cb69","status":"active","population":{"reference":"ResearchElementDefinition/069242bc-24e1-5cad-b25c-5ea15406a6cf"}}
+{"resourceType":"ResearchDefinition","id":"58753947-1463-5a02-a2a2-645da4601cab","status":"active","population":{"reference":"ResearchElementDefinition/80e866fb-64be-5981-8409-840f3b67540e"}}
+{"resourceType":"ResearchDefinition","id":"dc2df13e-f93a-5fca-9015-5a2bb61bd919","status":"active","population":{"reference":"ResearchElementDefinition/0183b54d-4758-5980-9fff-c5cfe1927972"}}
+{"resourceType":"ResearchDefinition","id":"dd7426ed-5741-50c2-bb31-d3586b72095a","status":"active","population":{"reference":"ResearchElementDefinition/6736d695-b0d1-51ef-8283-06a4216659ae"}}
