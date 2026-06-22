@@ -55,6 +55,7 @@ Set-StrictMode -Version Latest
 # hard-pinned regardless of any param/config input.
 # ---------------------------------------------------------------------------
 $ConfigFile = Join-Path $PSScriptRoot "deployment.config"
+$script:RunPipelinesOnDeploy = $true   # default on (matches the default-checked form box)
 if (Test-Path $ConfigFile) {
     $cfg = @{}
     Get-Content $ConfigFile | ForEach-Object {
@@ -66,6 +67,7 @@ if (Test-Path $ConfigFile) {
     }
     if ($cfg.ContainsKey('RESOURCE_GROUP')  -and $cfg['RESOURCE_GROUP'])  { $ResourceGroup  = $cfg['RESOURCE_GROUP'] }
     if ($cfg.ContainsKey('RESOURCE_PREFIX') -and $cfg['RESOURCE_PREFIX']) { $ResourcePrefix = $cfg['RESOURCE_PREFIX'] }
+    if ($cfg.ContainsKey('RUN_PIPELINES_ON_DEPLOY')) { $script:RunPipelinesOnDeploy = ($cfg['RUN_PIPELINES_ON_DEPLOY'] -eq 'true') }
     # LOCATION from the config is intentionally ignored (see note above).
 }
 $Location = "westus3"
@@ -953,7 +955,7 @@ if (-not $SkipFabric) {
         }
     }
 
-    Invoke-Phase "10 Deploy Data Foundations (portal, manual)" -EstSeconds 175 {
+    Invoke-Phase "10 Deploy Data Foundations (portal, manual)" {
         # No supported REST API deploys HDS foundations; it's a portal-only
         # wizard. Pause here, hand the user the direct link, and resume once they
         # confirm. After they confirm, discover the provisioned children.
@@ -980,8 +982,9 @@ if (-not $SkipFabric) {
         Write-Host "         d. No settings to configure                         -> Next" -ForegroundColor Yellow
         Write-Host "         e. Check the box to accept the terms of service     -> Deploy" -ForegroundColor Yellow
         Write-Host "    4. Wait for it to finish (do NOT close the portal tab while it runs)." -ForegroundColor Yellow
-        Write-Host "       NOTE: the spinner does NOT auto-update. If it's still" -ForegroundColor Yellow
-        Write-Host "       spinning past ~3 min, REFRESH the page - it's likely done." -ForegroundColor Yellow
+        Write-Host "       This step genuinely takes a while - it waits for the Spark" -ForegroundColor Yellow
+        Write-Host "       environment to provision and publish. The spinner does NOT" -ForegroundColor Yellow
+        Write-Host "       auto-update, so refresh the page to see the real status." -ForegroundColor Yellow
         Write-Host "  ============================================================" -ForegroundColor Yellow
         Write-Host ""
 
@@ -992,7 +995,7 @@ if (-not $SkipFabric) {
         # pipeline) exist. They can close the terminal window to bail out.
         $tok = $null
         while ($true) {
-            Read-Host "When Data Foundations has finished deploying, press Enter to continue (or close this window to exit)"
+            Read-Host "When Data Foundations has finished deploying, press Enter to continue (to exit this deployer, close the window)"
             $tok = Get-FabricToken
             $items = Get-FabricItems -Token $tok -WorkspaceId $script:FabricWorkspaceId
             $script:BronzeLakehouse = $items | Where-Object { $_.type -eq 'Lakehouse'     -and $_.displayName -match 'bronze' } | Select-Object -First 1
@@ -1369,17 +1372,18 @@ if (-not $SkipFabric) {
             }
         }
 
-        $ans = Read-Host "Environment is ready. Kick off the '$($script:IngestPipeline.displayName)' ingestion pipeline now? [Y/n]"
-        if ($ans -match '^(n|no)$') {
-            Write-Host "  Skipped. The environment is published, so you can trigger it immediately from: $pipeUrl"
+        if (-not $script:RunPipelinesOnDeploy) {
+            Write-Host "  'Run pipelines once deployed' was unchecked - leaving the pipeline for you to run." -ForegroundColor Yellow
+            Write-Host "  The environment is published, so you can trigger it any time from: $pipeUrl"
+            return
         }
-        else {
-            $tok = Get-FabricToken
-            $r = Invoke-FabricRest -Token $tok -Method POST `
-                -Path "/workspaces/$($script:FabricWorkspaceId)/items/$($script:IngestPipeline.id)/jobs/instances?jobType=Pipeline"
-            if ($r.Status -in 200, 201, 202) { Write-Host "  pipeline run started. Watch it here: $pipeUrl" -ForegroundColor Green }
-            else { Write-Host "  [!] Pipeline start returned HTTP $($r.Status). Run it from: $pipeUrl" -ForegroundColor Yellow }
-        }
+
+        Write-Host "  Kicking off the '$($script:IngestPipeline.displayName)' ingestion pipeline..."
+        $tok = Get-FabricToken
+        $r = Invoke-FabricRest -Token $tok -Method POST `
+            -Path "/workspaces/$($script:FabricWorkspaceId)/items/$($script:IngestPipeline.id)/jobs/instances?jobType=Pipeline"
+        if ($r.Status -in 200, 201, 202) { Write-Host "  pipeline run started. Watch it here: $pipeUrl" -ForegroundColor Green }
+        else { Write-Host "  [!] Pipeline start returned HTTP $($r.Status). Run it from: $pipeUrl" -ForegroundColor Yellow }
     }
 }
 

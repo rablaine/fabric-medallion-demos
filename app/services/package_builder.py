@@ -71,6 +71,10 @@ class PackageBuilder:
             # Flow selector read by deploy.cmd (healthcare): 'sampledata' runs the
             # assisted sample-data flow, anything else runs the FHIR-first flow.
             f"DEPLOY_MODE={config.get('deploy_mode', 'fhir')}",
+            # Healthcare both-flows: run the solution pipeline(s) automatically once
+            # deploy finishes (sample-data flow also stages + orchestrates every
+            # detected solution). 'false' stops after staging/wiring.
+            f"RUN_PIPELINES_ON_DEPLOY={'true' if config.get('run_pipelines_on_deploy') else 'false'}",
         ]
         (staging / "deployment.config").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

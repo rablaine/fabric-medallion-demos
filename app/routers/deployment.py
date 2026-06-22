@@ -25,6 +25,7 @@ async def generate_package(
     auto_run_initial_load: str = Form(None),
     deploy_purview: str = Form(None),
     deploy_mode: str = Form("fhir"),
+    run_pipelines_on_deploy: str = Form(None),
 ):
     """Generate a downloadable deployment package for the selected vertical."""
     registry = request.app.state.registry
@@ -47,6 +48,11 @@ async def generate_package(
     # sample-data flow; everything else (and any unknown value) is the default.
     deploy_mode_val = "sampledata" if deploy_mode == "sampledata" else "fhir"
 
+    # "Run pipelines once deployed" checkbox (healthcare, both flows). It is
+    # checked by default, so a posted form omits it only when the user unchecked
+    # it. Absent -> False (stop after staging/wiring); present -> True.
+    run_pipelines_flag = run_pipelines_on_deploy is not None
+
     builder = PackageBuilder(vertical=vertical)
     package_path = builder.build(
         config={
@@ -56,6 +62,7 @@ async def generate_package(
             "auto_run_initial_load": auto_run_flag,
             "deploy_purview": deploy_purview_flag,
             "deploy_mode": deploy_mode_val,
+            "run_pipelines_on_deploy": run_pipelines_flag,
         }
     )
 

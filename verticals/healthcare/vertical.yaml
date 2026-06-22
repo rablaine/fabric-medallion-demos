@@ -28,10 +28,15 @@ flows:
       Fabric F8 capacity, workspace, and Healthcare data solutions item, then
       walks you through deploying Data Foundations with the built-in sample
       dataset and stages the curated clinical data into the medallion for you.
+      If you add other sample-data-backed solutions (CMS claims, SDOH, OMOP,
+      DICOM imaging, care management), it detects them and stages their sample
+      data too - and can run their pipelines in the right order for you, or
+      leave that to you.
     deploys:
       - Microsoft Fabric F8 capacity + workspace
       - Healthcare data solutions item (Data Foundations + built-in sample dataset)
       - Curated clinical sample data staged into the medallion (bronze → silver)
+      - 'Optional: any added solutions (claims, SDOH, OMOP, DICOM, care management) auto-detected, staged, and optionally run'
     excludes:
       - 'No Azure Health Data Services / FHIR service'
       - No Azure Data Lake Storage account

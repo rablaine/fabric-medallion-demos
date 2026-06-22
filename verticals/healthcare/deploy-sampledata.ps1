@@ -57,6 +57,7 @@ Set-StrictMode -Version Latest
 # capacity quota (West US 3, same as the FHIR flow) regardless of config input.
 # ---------------------------------------------------------------------------
 $ConfigFile = Join-Path $PSScriptRoot "deployment.config"
+$script:RunPipelinesOnDeploy = $true   # default on (matches the default-checked form box)
 if (Test-Path $ConfigFile) {
     $cfg = @{}
     Get-Content $ConfigFile | ForEach-Object {
@@ -68,6 +69,7 @@ if (Test-Path $ConfigFile) {
     }
     if ($cfg.ContainsKey('RESOURCE_GROUP')  -and $cfg['RESOURCE_GROUP'])  { $ResourceGroup  = $cfg['RESOURCE_GROUP'] }
     if ($cfg.ContainsKey('RESOURCE_PREFIX') -and $cfg['RESOURCE_PREFIX']) { $ResourcePrefix = $cfg['RESOURCE_PREFIX'] }
+    if ($cfg.ContainsKey('RUN_PIPELINES_ON_DEPLOY')) { $script:RunPipelinesOnDeploy = ($cfg['RUN_PIPELINES_ON_DEPLOY'] -eq 'true') }
     # LOCATION from the config is intentionally ignored (pinned below).
 }
 $Location = "westus3"
@@ -81,12 +83,18 @@ try { Start-Transcript -Path $TranscriptPath | Out-Null } catch {}
 $InfraDir      = Join-Path $PSScriptRoot "infra"
 $CapacityBicep = Join-Path $InfraDir "capacity.bicep"
 $FabricPs1     = Join-Path $PSScriptRoot "scripts\Fabric.ps1"
+$HdsSolutionsPs1 = Join-Path $PSScriptRoot "scripts\HdsSolutions.ps1"
 
 # Dot-source the Fabric REST helpers at SCRIPT scope so every phase can see
 # Get-FabricToken / New-FabricWorkspace / Get-FabricCapacityGuid / etc.
 if (-not $SkipFabric) {
     if (-not (Test-Path $FabricPs1)) { throw "Missing $FabricPs1" }
     . $FabricPs1
+    # Solution detection / sample staging / pipeline orchestration helpers. Their
+    # bodies call the OneLake helpers defined further down, which exist by the
+    # time any of these run (in the phases below).
+    if (-not (Test-Path $HdsSolutionsPs1)) { throw "Missing $HdsSolutionsPs1" }
+    . $HdsSolutionsPs1
 }
 
 # ---------------------------------------------------------------------------
@@ -587,7 +595,7 @@ Invoke-Phase "04 Create Healthcare data solutions item" -EstSeconds 10 {
     }
 }
 
-Invoke-Phase "05 Deploy Data Foundations + Sample data (portal, manual)" -EstSeconds 240 {
+Invoke-Phase "05 Deploy Data Foundations + Sample data (portal, manual)" {
     # No supported REST API deploys HDS foundations OR loads the sample dataset;
     # both are portal-only wizard steps. Pause, hand the user the direct link,
     # and resume once the key children + sample data exist.
@@ -609,23 +617,33 @@ Invoke-Phase "05 Deploy Data Foundations + Sample data (portal, manual)" -EstSec
     Write-Host "         b. *** CHECK the 'Sample data' box ***             -> Next" -ForegroundColor Yellow
     Write-Host "            (this is the OPPOSITE of the FHIR flow - here we" -ForegroundColor Yellow
     Write-Host "             WANT the built-in synthetic sample dataset)" -ForegroundColor Yellow
-    Write-Host "         c. No additional capabilities                      -> Next" -ForegroundColor Yellow
+    Write-Host "         c. (optional) ADD any extra solutions you want a demo" -ForegroundColor Yellow
+    Write-Host "            of - CMS claims, SDOH, OMOP, DICOM imaging, care" -ForegroundColor Yellow
+    Write-Host "            management. This deployer auto-detects whatever you" -ForegroundColor Yellow
+    Write-Host "            pick and stages its sample data for you." -ForegroundColor Yellow
+    if ($script:RunPipelinesOnDeploy) {
+    Write-Host "            It then runs their pipelines in the correct order.  -> Next" -ForegroundColor Yellow
+    } else {
+    Write-Host "            You run the pipelines yourself afterward.           -> Next" -ForegroundColor Yellow
+    }
     Write-Host "         d. No settings to configure                        -> Next" -ForegroundColor Yellow
     Write-Host "         e. Check the box to accept the terms of service    -> Deploy" -ForegroundColor Yellow
     Write-Host "    4. Wait for it to finish (do NOT close the portal tab while it runs)." -ForegroundColor Yellow
-    Write-Host "       NOTE: the spinner does NOT auto-update. If it's still" -ForegroundColor Yellow
-    Write-Host "       spinning past ~3 min, REFRESH the page - it's likely done." -ForegroundColor Yellow
+    Write-Host "       This step genuinely takes a while - it waits for the Spark" -ForegroundColor Yellow
+    Write-Host "       environment to provision and publish. The spinner does NOT" -ForegroundColor Yellow
+    Write-Host "       auto-update, so refresh the page to see the real status." -ForegroundColor Yellow
     Write-Host "  ============================================================" -ForegroundColor Yellow
     Write-Host ""
 
     # Loop until foundations is deployed (bronze lakehouse + ingestion pipeline
     # exist). They can close the terminal to bail out.
     while ($true) {
-        Read-Host "When Data Foundations (with sample data) has finished deploying, press Enter to continue (or close this window to exit)"
+        Read-Host "When Data Foundations (with sample data) has finished deploying, press Enter to continue (to exit this deployer, close the window)"
         $tok = Get-FabricToken
         $items = Get-FabricItems -Token $tok -WorkspaceId $script:FabricWorkspaceId
+        $script:AllItems        = $items
         $script:BronzeLakehouse = $items | Where-Object { $_.type -eq 'Lakehouse'    -and $_.displayName -match 'bronze' } | Select-Object -First 1
-        $script:IngestPipeline  = $items | Where-Object { $_.type -eq 'DataPipeline' -and $_.displayName -match 'ingest' } | Select-Object -First 1
+        $script:IngestPipeline  = $items | Where-Object { $_.type -eq 'DataPipeline' -and $_.displayName -match '_msft_clinical_data_foundation_ingestion' } | Select-Object -First 1
         $script:AdminLakehouse  = $items | Where-Object { $_.type -eq 'Lakehouse'    -and $_.displayName -match 'admin'  } | Select-Object -First 1
         $script:ConfigNotebook  = $items | Where-Object { $_.type -eq 'Notebook'     -and $_.displayName -match 'config' } | Select-Object -First 1
         $script:HdsEnvironment  = $items | Where-Object { $_.type -eq 'Environment' } | Select-Object -First 1
@@ -644,6 +662,14 @@ Invoke-Phase "05 Deploy Data Foundations + Sample data (portal, manual)" -EstSec
     else { Write-Host "  [!] No config notebook found - can't auto-inject the scipy repair cell." -ForegroundColor Yellow }
     if ($script:HdsEnvironment)  { Write-Host "spark environment:  $($script:HdsEnvironment.displayName) (id=$($script:HdsEnvironment.id))" }
     else { Write-Host "  [!] No Spark environment found - can't wait for publishing before ingestion." -ForegroundColor Yellow }
+
+    # Detect which Healthcare data solutions the user actually deployed in the
+    # wizard (clinical is always present; claims / SDOH / OMOP / DICOM / care
+    # management appear only if they were added). Drives staging + run below.
+    $script:DeployedSolutions = @(Get-DeployedHdsSolutions -Items $items)
+    if ($script:DeployedSolutions.Count -gt 0) {
+        Write-Host ("solutions found:    {0}" -f (($script:DeployedSolutions | ForEach-Object { $_.DisplayName }) -join ', ')) -ForegroundColor Green
+    }
 }
 
 Invoke-Phase "06 Stage curated sample data into Ingest" -EstSeconds 90 {
@@ -708,7 +734,26 @@ Invoke-Phase "06 Stage curated sample data into Ingest" -EstSeconds 90 {
     if ($ok -eq 0) { Write-Host "  [!] Nothing staged - ingestion will have no input. Check the messages above." -ForegroundColor Yellow }
 }
 
-Invoke-Phase "07 Patch config notebook (scipy fix)" -EstSeconds 20 {
+Invoke-Phase "07 Stage sample data for added solutions" -EstSeconds 60 {
+    # If the user added extra solutions in the wizard (claims / SDOH / DICOM),
+    # stage each one's built-in sample dataset from Files/SampleData -> Files/Ingest
+    # so its pipeline has input. Clinical is already staged (phase 06); OMOP and
+    # care management read existing silver/gold tables and need no raw staging.
+    # Staging always runs - the 'run pipelines once deployed' checkbox only
+    # controls whether we auto-run the pipelines afterward (phase 09), not staging.
+    if (-not $script:BronzeLakehouse) {
+        Write-Host "  [!] No bronze lakehouse discovered; skipping staging." -ForegroundColor Yellow
+        return
+    }
+    $extra = @($script:DeployedSolutions | Where-Object { $_.Key -ne 'clinical' -and $_.Stage })
+    if ($extra.Count -eq 0) {
+        Write-Host "  No added solutions need sample staging (only clinical detected)." -ForegroundColor DarkGray
+        return
+    }
+    Invoke-HdsSampleStaging -WorkspaceId $script:FabricWorkspaceId -BronzeId $script:BronzeLakehouse.id -Solutions $extra
+}
+
+Invoke-Phase "08 Patch config notebook (scipy fix)" -EstSeconds 20 {
     # TEMPORARY: Fabric Runtime 1.3 HDS env ships scipy .py over an older
     # _rotation.so; the hds/dtt import dies until a forced scipy reinstall.
     # Inject the repair cell into the *_config notebook right after the
@@ -784,40 +829,52 @@ Invoke-Phase "07 Patch config notebook (scipy fix)" -EstSeconds 20 {
     }
 }
 
-Invoke-Phase "08 Ingestion pipeline" {
-    if (-not $script:IngestPipeline) {
-        Write-Host "  [!] No ingestion pipeline discovered; run it from the portal once foundations is deployed." -ForegroundColor Yellow
+Invoke-Phase "09 Run solution pipelines" {
+    $portalUrl = "https://app.fabric.microsoft.com/groups/$($script:FabricWorkspaceId)/list"
+
+    if (-not $script:RunPipelinesOnDeploy) {
+        Write-Host "  'Auto-run pipelines' was unchecked - sample data is staged, but the" -ForegroundColor Yellow
+        Write-Host "  pipelines are left for you to run. When the Spark environment shows" -ForegroundColor Yellow
+        Write-Host "  'Published', run them in this order from the portal:" -ForegroundColor Yellow
+        Write-Host "    1. clinical data foundation ingestion (the base everything depends on, ~1.5 h)" -ForegroundColor Yellow
+        Write-Host "    2. SDOH ingestion can run any time (isolated, ~20 min)" -ForegroundColor Yellow
+        Write-Host "    3. claims (~17m) / OMOP (~27m) / DICOM (~34m) one at a time (share the FHIR flatten)" -ForegroundColor Yellow
+        Write-Host "    4. care management analytics last (~14m; needs clinical + claims + SDOH)" -ForegroundColor Yellow
+        Write-Host "  Plan for ~3-4 hours end to end on an F8 capacity - the pipelines are" -ForegroundColor Yellow
+        Write-Host "  genuinely long-running; that's expected, not a failure." -ForegroundColor Yellow
+        Write-Host "    $portalUrl" -ForegroundColor Yellow
         return
     }
-    $pipeUrl = "https://app.fabric.microsoft.com/groups/$($script:FabricWorkspaceId)/pipelines/$($script:IngestPipeline.id)"
 
-    # Wait for the Spark environment to finish publishing BEFORE we prompt -
-    # ingestion notebooks fail until it's done.
+    # Re-detect from a fresh item list in case extra solutions finished
+    # deploying after phase 05's snapshot.
+    $tok   = Get-FabricToken
+    $items = Get-FabricItems -Token $tok -WorkspaceId $script:FabricWorkspaceId
+    $script:DeployedSolutions = @(Get-DeployedHdsSolutions -Items $items)
+    if ($script:DeployedSolutions.Count -eq 0) {
+        Write-Host "  [!] No solution pipelines detected in the workspace; nothing to run." -ForegroundColor Yellow
+        Write-Host "      Run them manually once foundations is deployed: $portalUrl" -ForegroundColor Yellow
+        return
+    }
+
+    # Wait for the Spark environment to finish publishing BEFORE we run anything -
+    # ingestion notebooks fail until it's done (first publish installs HDS libs).
     if ($script:HdsEnvironment) {
-        Write-Host "  The Spark environment '$($script:HdsEnvironment.displayName)' has to finish publishing"
-        Write-Host "  before ingestion can run (first publish installs the HDS libraries). This"
-        Write-Host "  usually takes ~5-10 min. Waiting for it now so the pipeline won't fail..."
-        $tok = Get-FabricToken
+        Write-Host "  Waiting for the Spark environment '$($script:HdsEnvironment.displayName)' to finish"
+        Write-Host "  publishing before running pipelines (usually ~5-10 min)..."
         $envReady = Wait-FabricEnvironmentPublish -Token $tok -WorkspaceId $script:FabricWorkspaceId -EnvironmentId $script:HdsEnvironment.id
         if (-not $envReady) {
-            Write-Host "  [!] The environment is still publishing. Do NOT run the pipeline yet - it" -ForegroundColor Yellow
-            Write-Host "      will fail. Wait until it shows 'Published' in Fabric, then run it from:" -ForegroundColor Yellow
-            Write-Host "      $pipeUrl" -ForegroundColor Yellow
+            Write-Host "  [!] The environment is still publishing - not running pipelines (they'd fail)." -ForegroundColor Yellow
+            Write-Host "      Wait until it shows 'Published' in Fabric, then run them from: $portalUrl" -ForegroundColor Yellow
             return
         }
     }
 
-    $ans = Read-Host "Environment is ready. Kick off the '$($script:IngestPipeline.displayName)' ingestion pipeline now? [Y/n]"
-    if ($ans -match '^(n|no)$') {
-        Write-Host "  Skipped. The environment is published, so you can trigger it immediately from: $pipeUrl"
-    }
-    else {
-        $tok = Get-FabricToken
-        $r = Invoke-FabricRest -Token $tok -Method POST `
-            -Path "/workspaces/$($script:FabricWorkspaceId)/items/$($script:IngestPipeline.id)/jobs/instances?jobType=Pipeline"
-        if ($r.Status -in 200, 201, 202) { Write-Host "  pipeline run started. Watch it here: $pipeUrl" -ForegroundColor Green }
-        else { Write-Host "  [!] Pipeline start returned HTTP $($r.Status). Run it from: $pipeUrl" -ForegroundColor Yellow }
-    }
+    Write-Host ("  running {0} solution pipeline(s) in dependency order: {1}" -f `
+        $script:DeployedSolutions.Count, (($script:DeployedSolutions | ForEach-Object { $_.DisplayName }) -join ', ')) -ForegroundColor Cyan
+    Write-HdsRuntimeHeadsUp -Solutions $script:DeployedSolutions
+    Invoke-HdsPipelineOrchestration -WorkspaceId $script:FabricWorkspaceId -Solutions $script:DeployedSolutions
+    Write-Host "  all detected pipelines have been run. Review results in the portal: $portalUrl" -ForegroundColor Green
 }
 
 Write-TimingSummary
