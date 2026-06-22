@@ -10,6 +10,12 @@
     <h1>{{ vertical.name }} Data Estate</h1>
     <p class="description">{{ vertical.description }}</p>
 
+    {% if has_solutions_deck %}
+    <a href="/verticals/{{ vertical.id }}/solutions" class="solutions-link" target="_blank" rel="noopener">
+        Walk through what each solution does &rarr;
+    </a>
+    {% endif %}
+
     {% if vertical.flows %}
     <h2>Choose a deployment flow</h2>
     <p class="flow-intro">This vertical can be deployed two ways. They build the

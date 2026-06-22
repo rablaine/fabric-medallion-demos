@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Healthcare Data Solutions — What Each Solution Does</title>
+<script>
+  (() => {
+    const param = new URLSearchParams(window.location.search).get("scoutTheme");
+    const theme =
+      param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --cp-bg: #f7f4ef;
+  --cp-bg-elevated: #fcfbf8;
+  --cp-surface: #ffffff;
+  --cp-surface-soft: #f5f5f5;
+  --cp-border: #dedede;
+  --cp-border-strong: #919191;
+  --cp-text: #242424;
+  --cp-text-muted: #5c5c5c;
+  --cp-text-soft: #6f6f6f;
+  --cp-accent: #b11f4b;
+  --cp-accent-hover: #9a1a41;
+  --cp-accent-soft: rgba(177, 31, 75, 0.08);
+  --cp-accent-fg: #ffffff;
+  --cp-success: #16a34a;
+  --cp-danger: #dc2626;
+  --cp-warning: #f59e0b;
+  --cp-link: #0078d4;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+  --cp-overlay: rgba(255, 255, 255, 0.8);
+  --cp-panel: rgba(255, 255, 255, 0.86);
+  --cp-panel-strong: rgba(255, 255, 255, 0.96);
+  --cp-sheen: rgba(255, 255, 255, 0.55);
+  --cp-highlight: rgba(177, 31, 75, 0.12);
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --cp-bg: #3d3b3a;
+  --cp-bg-elevated: #343231;
+  --cp-surface: #292929;
+  --cp-surface-soft: #2e2e2e;
+  --cp-border: #474747;
+  --cp-border-strong: #5f5f5f;
+  --cp-text: #dedede;
+  --cp-text-muted: #919191;
+  --cp-text-soft: #b0b0b0;
+  --cp-accent: #fd8ea1;
+  --cp-accent-hover: #fb7b91;
+  --cp-accent-soft: rgba(253, 142, 161, 0.14);
+  --cp-accent-fg: #1a1a1a;
+  --cp-success: #4ade80;
+  --cp-danger: #f87171;
+  --cp-warning: #fbbf24;
+  --cp-link: #4da6ff;
+  --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  --cp-overlay: rgba(41, 41, 41, 0.88);
+  --cp-panel: rgba(41, 41, 41, 0.72);
+  --cp-panel-strong: rgba(41, 41, 41, 0.96);
+  --cp-sheen: rgba(255, 255, 255, 0.04);
+  --cp-highlight: rgba(253, 142, 161, 0.12);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--cp-bg);
+  color: var(--cp-text);
+  overflow: hidden;
+}
+code, .mono { font-family: Consolas, "Courier New", Courier, monospace; }
+
+.deck { height: 100vh; display: flex; flex-direction: column; }
+.stage { flex: 1; position: relative; overflow: hidden; }
+
+.slide {
+  position: absolute;
+  inset: 0;
+  padding: 2.6rem 3.4rem 1.6rem;
+  display: none;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.slide.active { display: flex; animation: fade .3s ease; }
+@keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* header */
+.slide-head { display: flex; align-items: flex-start; gap: 1.1rem; margin-bottom: 1.4rem; }
+.idx {
+  font-size: 0.82rem; font-weight: 700; color: var(--cp-accent-fg);
+  background: var(--cp-accent); border-radius: 0.625rem;
+  padding: 0.4rem 0.7rem; white-space: nowrap; letter-spacing: .03em;
+}
+.slide-head h2 { font-size: 2.05rem; line-height: 1.12; font-weight: 700; }
+.slide-head .sub { color: var(--cp-text-muted); font-size: 1.1rem; margin-top: 0.25rem; max-width: 70ch; }
+.avail {
+  font-size: 0.78rem; font-weight: 700;
+  padding: 0.38rem 0.8rem; border-radius: 999px; white-space: nowrap; border: 1px solid transparent;
+}
+.avail-ga { background: rgba(22,163,74,0.12); color: var(--cp-success); border-color: rgba(22,163,74,0.35); }
+.avail-preview { background: rgba(0,120,212,0.12); color: var(--cp-link); border-color: rgba(0,120,212,0.4); }
+.avail-req { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+.pills { margin-left: auto; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.mandate {
+  display: flex; align-items: center; gap: 0.55rem;
+  background: var(--cp-accent-soft); border: 1px solid var(--cp-accent); border-left-width: 4px;
+  border-radius: 0.625rem; padding: 0.65rem 0.95rem; margin-bottom: 1.1rem;
+  font-size: 1.0rem; line-height: 1.4; color: var(--cp-text);
+}
+.mandate b { color: var(--cp-accent); }
+
+/* main body: left = what it does, right column stacked = flow + value */
+.body {
+  flex: 1; display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 1.2rem; min-height: 0;
+}
+.col { display: flex; flex-direction: column; gap: 1.2rem; min-height: 0; }
+
+.card {
+  background: var(--cp-surface);
+  border: 1px solid var(--cp-border);
+  border-radius: 16px;
+  box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14);
+  padding: 1.3rem 1.5rem;
+  overflow-y: auto;
+}
+.card h3 {
+  font-size: 0.84rem; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--cp-text-soft); margin-bottom: 0.85rem;
+  display: flex; align-items: center; gap: 0.55rem;
+}
+.card h3 .dot { width: 11px; height: 11px; border-radius: 50%; }
+.dot-do { background: var(--cp-link); }
+.dot-flow { background: var(--cp-warning); }
+.dot-value { background: var(--cp-success); }
+.dot-deploy { background: var(--cp-accent); }
+.grow { flex: 1; }
+
+.card.tall { flex: 1.3; }
+.card.value { background: var(--cp-accent-soft); border-color: var(--cp-accent); flex: 1; }
+
+.card ul { list-style: none; display: flex; flex-direction: column; gap: 0.7rem; }
+.card li {
+  font-size: 1.0rem; line-height: 1.45; padding-left: 1.3rem;
+  position: relative; color: var(--cp-text);
+}
+.card li::before {
+  content: ""; position: absolute; left: 0; top: 0.55em;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--cp-border-strong);
+}
+.card.value li::before { background: var(--cp-accent); }
+.card li b { font-weight: 700; }
+
+code {
+  background: var(--cp-surface-soft); border: 1px solid var(--cp-border);
+  border-radius: 5px; padding: 0.05rem 0.35rem; font-size: 0.86rem;
+}
+html[data-theme="dark"] code { background: var(--cp-bg-elevated); }
+
+/* data-flow chips */
+.flowline { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.fchip {
+  font-size: 0.9rem; font-weight: 600;
+  background: var(--cp-surface-soft); border: 1px solid var(--cp-border);
+  border-radius: 0.5rem; padding: 0.4rem 0.7rem;
+}
+.fchip small { display: block; font-weight: 400; font-size: 0.72rem; color: var(--cp-text-soft); }
+.farrow { color: var(--cp-accent); font-weight: 700; font-size: 1.1rem; }
+.outputs { margin-top: 0.9rem; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.otag {
+  font-size: 0.82rem; font-family: Consolas, monospace;
+  background: var(--cp-accent-soft); border: 1px solid var(--cp-accent);
+  color: var(--cp-text); border-radius: 0.45rem; padding: 0.2rem 0.5rem;
+}
+
+/* deploy list */
+.deploy-list { display: flex; flex-direction: column; gap: 0.55rem; }
+.deploy-row {
+  display: flex; align-items: center; gap: 0.7rem;
+  font-size: 0.97rem; line-height: 1.3;
+  padding: 0.45rem 0.65rem;
+  background: var(--cp-surface-soft);
+  border: 1px solid var(--cp-border);
+  border-radius: 0.55rem;
+}
+html[data-theme="dark"] .deploy-row { background: var(--cp-bg-elevated); }
+.deploy-row .rname { flex: 1; }
+.rtype {
+  font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  padding: 0.16rem 0.5rem; border-radius: 999px; white-space: nowrap; border: 1px solid transparent;
+}
+.rt-nb { background: rgba(0,120,212,0.12); color: var(--cp-link); border-color: rgba(0,120,212,0.35); }
+.rt-pipe { background: rgba(245,158,11,0.14); color: var(--cp-warning); border-color: rgba(245,158,11,0.4); }
+.rt-lh { background: rgba(22,163,74,0.12); color: var(--cp-success); border-color: rgba(22,163,74,0.35); }
+.rt-sm { background: var(--cp-accent-soft); color: var(--cp-accent); border-color: var(--cp-accent); }
+.rt-rpt { background: var(--cp-surface); color: var(--cp-text-muted); border-color: var(--cp-border-strong); }
+
+.dep {
+  margin-top: 0.9rem; font-size: 0.9rem; padding: 0.6rem 0.8rem; border-radius: 0.5rem;
+  background: rgba(0,120,212,0.08); border: 1px solid rgba(0,120,212,0.35); color: var(--cp-text);
+}
+.dep b { color: var(--cp-link); }
+
+/* title slide */
+.title-slide { align-items: center; justify-content: center; text-align: center; }
+.title-slide h1 { font-size: 3.2rem; line-height: 1.08; max-width: 20ch; margin-bottom: 1.1rem; }
+.title-slide .lede { font-size: 1.3rem; color: var(--cp-text-muted); max-width: 64ch; margin-bottom: 2rem; }
+.agenda { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; margin-top: 0.5rem; width: min(900px, 90%); }
+.agenda button {
+  display: flex; align-items: center; gap: 0.7rem; text-align: left;
+  font-family: inherit; font-size: 0.98rem; color: var(--cp-text);
+  background: var(--cp-surface); border: 1px solid var(--cp-border);
+  border-radius: 0.625rem; padding: 0.6rem 0.95rem; cursor: pointer;
+}
+.agenda button:hover { border-color: var(--cp-accent); background: var(--cp-accent-soft); }
+.agenda button .n { font-weight: 700; color: var(--cp-accent); width: 1.6rem; }
+.agenda button .s { margin-left: auto; font-size: 0.7rem; padding: 0.1rem 0.45rem; border-radius: 999px; }
+.s.now { background: rgba(22,163,74,0.14); color: var(--cp-success); }
+.s.req { background: var(--cp-accent); color: var(--cp-accent-fg); }
+.s.soon { background: rgba(0,120,212,0.14); color: var(--cp-link); }
+
+/* foundation flow */
+.flow { display: flex; align-items: stretch; gap: 0.7rem; margin: 0.6rem 0 1.4rem; flex-wrap: wrap; }
+.flow .step {
+  flex: 1; min-width: 180px; background: var(--cp-surface);
+  border: 1px solid var(--cp-border); border-radius: 14px; padding: 1.1rem 1.2rem;
+}
+.flow .step .lbl { font-size: 0.76rem; text-transform: uppercase; letter-spacing: .05em; color: var(--cp-accent); font-weight: 700; }
+.flow .step h4 { font-size: 1.15rem; margin: 0.2rem 0 0.4rem; }
+.flow .step p { font-size: 0.92rem; color: var(--cp-text-muted); line-height: 1.45; }
+.bigarrow { align-self: center; color: var(--cp-text-soft); font-size: 1.7rem; }
+
+/* controls */
+.controls { display: flex; align-items: center; gap: 0.8rem; padding: 0.55rem 1.6rem; border-top: 1px solid var(--cp-border); background: var(--cp-bg-elevated); }
+.controls button {
+  font-family: inherit; font-size: 0.86rem; font-weight: 600; color: var(--cp-text);
+  background: var(--cp-surface); border: 1px solid var(--cp-border);
+  border-radius: 0.625rem; padding: 0.42rem 0.85rem; cursor: pointer;
+}
+.controls button:hover { border-color: var(--cp-accent); color: var(--cp-accent); }
+.controls .title { font-weight: 700; font-size: 0.92rem; }
+.controls .spacer { flex: 1; }
+.counter { font-size: 0.86rem; color: var(--cp-text-muted); font-variant-numeric: tabular-nums; }
+.progress { position: absolute; bottom: 0; left: 0; height: 3px; background: var(--cp-accent); transition: width .3s ease; z-index: 5; }
+kbd { font-family: inherit; font-size: 0.72rem; background: var(--cp-surface-soft); border: 1px solid var(--cp-border); border-bottom-width: 2px; border-radius: 4px; padding: 0.05rem 0.35rem; }
+</style>
+</head>
+<body>
+<div class="deck">
+  <div class="stage" id="stage"></div>
+  <div class="progress" id="progress"></div>
+  <div class="controls">
+    <span class="title">Healthcare Data Solutions — What Each Solution Does</span>
+    <span class="spacer"></span>
+    <button id="prevBtn">&larr; Prev</button>
+    <span class="counter"><span id="cur">1</span> / <span id="total">1</span></span>
+    <button id="nextBtn">Next &rarr;</button>
+  </div>
+</div>
+
+<script>
+/* ============ DATA ============ */
+const SOLUTIONS = [
+  {
+    n:"01", key:"clinical", avail:"ga",
+    title:"Clinical Data Foundations",
+    sub:"Turns raw clinical records into one standardized, queryable clinical history.",
+    mandate:"It deploys the Bronze and Silver lakehouses that every other solution reads from — so wherever you start, these Fabric items are always in place.",
+    does:[
+      "Reads your clinical data (patients, encounters, diagnoses, labs, procedures, medications, care plans) as it arrives.",
+      "<b>Flattens</b> the complex nested clinical format into clean, analytics-ready tables.",
+      "<b>Standardizes everything to FHIR R4</b> — the international healthcare data standard — so every record follows one consistent shape.",
+      "Becomes the foundation every other solution reads from — load it once, reuse it everywhere."
+    ],
+    flow:[["Clinical records","raw bundles"],["Flatten + standardize","to FHIR R4"],["Clinical tables","ready to query"]],
+    outputs:["Patient","Encounter","Condition","Observation","Procedure","MedicationRequest","CarePlan"],
+    deploys:[["Bronze + Silver lakehouses","lh"],["Clinical ingestion notebooks","nb"],["Bronze→Silver FHIR flatten notebook","nb"],["Initial-load data pipeline","pipe"]],
+    value:[
+      "One trusted clinical dataset instead of dozens of disconnected systems.",
+      "Standardized in hours, not months of integration work.",
+      "Every later solution builds on this — no re-integration."
+    ]
+  },
+  {
+    n:"02", key:"claims", avail:"ga",
+    title:"CMS Claims",
+    sub:"Brings financial/claims data alongside clinical — the cost of care, not just the care.",
+    does:[
+      "Ingests CMS (Centers for Medicare &amp; Medicaid Services) claims files, delivered in the CCLF (Claim and Claim Line Feed) format — headers, line items, and beneficiary detail.",
+      "Reshapes them and <b>maps the claim into the FHIR standard</b> as an <code>ExplanationOfBenefit</code> — so claims sit in the same model as clinical data.",
+      "Links claims back to the patient, so cost and care live side by side."
+    ],
+    flow:[["Claims files","CCLF"],["Map to FHIR","standardize"],["Claims tables","linked to patient"]],
+    outputs:["ExplanationOfBenefit","ClaimsHeader","LineItemDetails","BeneficiaryDemographics"],
+    deploys:[["Claims ingestion notebook","nb"],["CCLF→FHIR (EOB) mapping notebook","nb"],["Claims data pipeline","pipe"],["Claims tables in Bronze + Silver","lh"]],
+    value:[
+      "See what care happened <b>and</b> what it cost — the full patient journey.",
+      "Spot cost leakage and understand true cost-of-care.",
+      "Feeds the cost view in the care-management cockpit."
+    ]
+  },
+  {
+    n:"03", key:"sdoh", avail:"ga",
+    title:"Social Determinants of Health",
+    sub:"Adds the non-clinical context — housing, food, environment — that drives ~80% of outcomes.",
+    does:[
+      "Ingests social-determinant datasets (housing, food access, deprivation indices, environmental factors).",
+      "<b>Categorizes and standardizes</b> them into a consistent social-determinant model with clear categories and sub-categories.",
+      "Attaches that social context to your patient population."
+    ],
+    flow:[["Social datasets","files"],["Categorize + standardize","social-determinant model"],["Social signals","by category"]],
+    outputs:["SocialDeterminant","Category","SubCategory"],
+    deploys:[["SDOH ingestion notebook","nb"],["Social-determinant transform notebook","nb"],["SDOH data pipeline","pipe"],["SocialDeterminant tables in Silver","lh"]],
+    value:[
+      "Find at-risk patients <b>before</b> they get sick.",
+      "Target outreach where it matters most.",
+      "Advance health equity with evidence, not assumptions."
+    ]
+  },
+  {
+    n:"04", key:"dicom", avail:"ga",
+    title:"DICOM Imaging",
+    sub:"Brings medical imaging into the unified record, linked to the patient.",
+    does:[
+      "Ingests imaging studies in the DICOM (Digital Imaging and Communications in Medicine) format.",
+      "<b>Extracts the metadata</b> from each study (modality, body part, study details) into queryable tables.",
+      "<b>Standardizes to FHIR</b> as an <code>ImagingStudy</code> and links it to the patient record."
+    ],
+    flow:[["Imaging studies","DICOM"],["Extract metadata","to FHIR"],["Imaging records","linked to patient"]],
+    outputs:["ImagingStudy","ImagingMetastore","ImagingDicom"],
+    deploys:[["DICOM ingestion notebook","nb"],["Imaging metadata extract notebook","nb"],["Imaging data pipeline","pipe"],["Imaging tables in Bronze + Silver","lh"]],
+    value:[
+      "Imaging is no longer a siloed archive — it's part of the record.",
+      "Analyze imaging alongside everything else about the patient.",
+      "Foundation for imaging-AI use cases."
+    ]
+  },
+  {
+    n:"05", key:"omop", avail:"ga",
+    title:"OMOP Common Data Model",
+    sub:"Reshapes your clinical data into the global standard used for research and population health.",
+    does:[
+      "Takes the standardized clinical data from the foundation.",
+      "<b>Transforms it into OMOP (Observational Medical Outcomes Partnership) CDM v5.4</b> — the data model used by pharma, academia, and public-health networks worldwide.",
+      "Maps clinical concepts to standardized research vocabularies, producing the full OMOP table set."
+    ],
+    flow:[["Clinical (FHIR)","standardized"],["Transform to OMOP","CDM v5.4"],["Research tables","population-ready"]],
+    outputs:["person","visit_occurrence","condition_occurrence","procedure_occurrence","drug_exposure","measurement","observation"],
+    deploys:[["Gold (OMOP) lakehouse","lh"],["FHIR→OMOP transform notebooks","nb"],["OMOP data pipeline","pipe"]],
+    value:[
+      "Plug into worldwide research tooling and population studies.",
+      "Collaborate externally without bespoke data prep.",
+      "Run cohort and outcomes analysis on a recognized standard."
+    ]
+  },
+  {
+    n:"06", key:"cma", avail:"ga",
+    title:"Care Management Analytics",
+    sub:"The capstone — fuses clinical, claims, and social into one care-manager cockpit.",
+    does:[
+      "Combines the clinical foundation, claims (cost), and social determinants into a single analytics model.",
+      "Builds a <b>care-management star schema</b>: care plans, activities, conditions, cost, and social context per patient.",
+      "Ships a <b>ready-built Power BI report</b> on top — no report-building required."
+    ],
+    flow:[["Clinical + Claims + Social","fused"],["Care model + report","star schema"],["Care cockpit","Power BI"]],
+    outputs:["care_plan","care_plan_activities","cost","social_determinant","condition_occurrence","Power BI report"],
+    deploys:[["Gold (Care Mgmt) lakehouse","lh"],["Care-management transform notebooks","nb"],["Care-management pipeline","pipe"],["Semantic model","sm"],["Care-management report","rpt"]],
+    value:[
+      "One screen shows a patient's conditions, what care cost, <b>and</b> the social barriers in the way.",
+      "Care managers intervene on the right patients, for the right reasons, at the right time.",
+      "Proof the platform is unified — three sources, one view, no stitching."
+    ]
+  },
+  {
+    n:"07", key:"d365ci", avail:"ga",
+    title:"Customer Insights — Patient Segmentation",
+    sub:"Prepares your patient data for unified profiles and segmentation in Dynamics 365.",
+    does:[
+      "Takes the standardized FHIR clinical data and <b>flattens it into customer/profile tables</b>.",
+      "Shapes those tables for <b>Dynamics 365 Customer Insights</b>, which unifies fragmented patient identities into a single profile.",
+      "Enables segmentation for population-health and engagement programs."
+    ],
+    flow:[["Clinical (FHIR)","standardized"],["Flatten to profiles","prep for CI"],["Unified profiles","+ segments"]],
+    outputs:["Patient profile tables","Customer Insights segments"],
+    deploys:[["Profile-prep notebooks","nb"],["Customer Insights data pipeline","pipe"],["Flattened profile tables","lh"]],
+    value:[
+      "Segment your patient/member population for targeted programs.",
+      "Unify scattered identities into one trusted profile.",
+      "Power engagement and population-health campaigns."
+    ],
+    dep:"Lights up with a <b>Dynamics 365 Customer Insights – Data</b> subscription. The Fabric data preparation is built in; segmentation runs in Dynamics."
+  },
+  {
+    n:"08", key:"outreach", avail:"ga",
+    title:"Patient Outreach Analytics",
+    sub:"Measures whether outreach actually drives appointments and engagement.",
+    does:[
+      "Combines <b>appointment data</b> with <b>marketing/outreach journey data</b> from Dynamics 365.",
+      "Builds an analytics model and <b>Power BI report</b> connecting campaigns to clinical engagement.",
+      "Shows which outreach efforts convert into appointments and show-ups."
+    ],
+    flow:[["Appointments","clinical"],["+ Outreach journeys","Dynamics 365"],["Outreach report","Power BI"]],
+    outputs:["Appointment analytics","Outreach effectiveness report"],
+    deploys:[["Appointment analytics notebook","nb"],["Outreach data pipeline","pipe"],["Semantic model","sm"],["Patient outreach report","rpt"]],
+    value:[
+      "Measure outreach effectiveness — which campaigns drive appointments.",
+      "Close the loop between marketing effort and clinical engagement.",
+      "Direct outreach spend where it works."
+    ],
+    dep:"Uses <b>Dynamics 365 Customer Insights – Journeys</b> for the marketing/journey data joined to appointments."
+  },
+  {
+    n:"09", key:"dax", avail:"ga",
+    title:"DAX Copilot — Ambient Documentation",
+    sub:"Turns AI-assisted clinical conversation notes into structured, analyzable data.",
+    does:[
+      "Ingests ambient clinical documentation captured by <b>DAX Copilot</b> (Dragon Ambient eXperience — AI that drafts notes from the clinician-patient conversation).",
+      "<b>Structures the transcripts</b> into clean tables in the standardized layer.",
+      "Makes that previously-trapped conversational data available for analytics."
+    ],
+    flow:[["Ambient notes","DAX Copilot"],["Structure transcripts","standardize"],["Documentation data","analyzable"]],
+    outputs:["DAXTranscripts","Documentation analytics"],
+    deploys:[["Transcript ingestion notebook","nb"],["DAX transform notebook","nb"],["DAX data pipeline","pipe"],["DAXTranscripts tables in Silver","lh"]],
+    value:[
+      "Surface insight from clinician-patient conversations that never reached a database.",
+      "Analyze documentation quality, throughput, and clinical signal.",
+      "Reduce clinician documentation burden while gaining data."
+    ],
+    dep:"Requires a <b>DAX Copilot</b> deployment feeding ambient documentation into the platform."
+  },
+  {
+    n:"10", key:"multimodal", avail:"preview",
+    title:"Multimodal AI Insights",
+    sub:"Applies healthcare AI to unstructured text and imaging — the data tables miss.",
+    does:[
+      "Runs <b>Azure AI healthcare models</b> across your data: Text Analytics for health on clinical notes, and imaging models (MedImageInsight / MedImageParse) on DICOM studies.",
+      "<b>Extracts entities, generates embeddings, and segments images</b>, then writes the results into an AI enrichment store.",
+      "Links those AI insights back to the FHIR patient record."
+    ],
+    flow:[["Notes + imaging","unstructured"],["Azure AI models","extract + enrich"],["AI insights","linked to patient"]],
+    outputs:["Clinical entities","Image segmentation","Embeddings / similarity"],
+    deploys:[["AI enrichment notebooks","nb"],["Multimodal AI pipeline","pipe"],["AI enrichment store (lakehouse)","lh"]],
+    value:[
+      "Unlock unstructured text and imaging — the majority of clinical data.",
+      "Entity extraction, similarity search, and image insight on the unified record.",
+      "Build advanced AI use cases on a governed foundation."
+    ],
+    dep:"Uses deployed <b>Azure AI healthcare model endpoints</b> (e.g. Text Analytics for health, MedImageInsight, MedImageParse)."
+  }
+];
+</script>
+
+<script>
+/* ============ RENDER ============ */
+const stage = document.getElementById("stage");
+
+function flowHtml(steps, outputs){
+  const chips = steps.map((s,i)=>{
+    const arrow = i < steps.length-1 ? `<span class="farrow">→</span>` : "";
+    return `<div class="fchip">${s[0]}<small>${s[1]}</small></div>${arrow}`;
+  }).join("");
+  const out = outputs.map(o=>`<span class="otag">${o}</span>`).join("");
+  return `<div class="flowline">${chips}</div><div class="outputs">${out}</div>`;
+}
+
+const RTYPE = { nb:"Notebook", pipe:"Pipeline", lh:"Lakehouse", sm:"Semantic model", rpt:"Power BI report" };
+function deployHtml(items){
+  const rows = items.map(([name,tk])=>
+    `<div class="deploy-row"><span class="rname">${name}</span><span class="rtype rt-${tk}">${RTYPE[tk]}</span></div>`
+  ).join("");
+  return `<div class="deploy-list">${rows}</div>`;
+}
+
+function solutionSlide(s){
+  const pill = s.avail==="preview"
+    ? `<span class="avail avail-preview">◆ Public preview</span>`
+    : `<span class="avail avail-ga">✓ Generally available</span>`;
+  const mandateTag = s.mandate ? `<span class="avail avail-req">★ Required foundation</span>` : "";
+  const mandateBanner = s.mandate ? `<div class="mandate">★ <span><b>Mandatory.</b> ${s.mandate}</span></div>` : "";
+  const does = s.does.map(t=>`<li>${t}</li>`).join("");
+  const value = s.value.map(t=>`<li>${t}</li>`).join("");
+  const dep = s.dep ? `<div class="dep">${s.dep}</div>` : "";
+  return `<section class="slide" data-key="${s.key}">
+    <div class="slide-head">
+      <span class="idx">${s.n}</span>
+      <div><h2>${s.title}</h2><div class="sub">${s.sub}</div></div>
+      <div class="pills">${mandateTag}${pill}</div>
+    </div>
+    ${mandateBanner}
+    <div class="body">
+      <div class="col">
+        <div class="card grow">
+          <h3><span class="dot dot-do"></span>What this solution does</h3>
+          <ul>${does}</ul>
+        </div>
+        <div class="card grow">
+          <h3><span class="dot dot-deploy"></span>What this solution deploys</h3>
+          ${deployHtml(s.deploys)}
+        </div>
+      </div>
+      <div class="col">
+        <div class="card">
+          <h3><span class="dot dot-flow"></span>How the data flows &amp; what it produces</h3>
+          ${flowHtml(s.flow, s.outputs)}
+          ${dep}
+        </div>
+        <div class="card value">
+          <h3><span class="dot dot-value"></span>What you get</h3>
+          <ul>${value}</ul>
+        </div>
+      </div>
+    </div>
+  </section>`;
+}
+
+const titleSlide = `<section class="slide title-slide" data-key="title">
+  <span class="idx" style="margin-bottom:1rem">MICROSOFT FABRIC</span>
+  <h1>Healthcare Data Solutions</h1>
+  <p class="lede">Bring clinical, claims, imaging, and social data into one governed estate,
+  standardized to FHIR (Fast Healthcare Interoperability Resources), the global healthcare
+  data standard — then turn it into research-ready models,
+  a care-management cockpit, and healthcare AI.</p>
+  <div class="agenda" id="agenda"></div>
+  <p style="margin-top:1.6rem;color:var(--cp-text-soft);font-size:.9rem">
+    Navigate with <kbd>←</kbd> <kbd>→</kbd> · <kbd>F</kbd> fullscreen · click any item to jump
+  </p>
+</section>`;
+
+const foundationSlide = `<section class="slide" data-key="foundation">
+  <div class="slide-head">
+    <span class="idx">00</span>
+    <div><h2>How It All Fits Together</h2>
+    <div class="sub">Every solution rides on one simple idea: bring data in, standardize it once, then build value on top.</div></div>
+  </div>
+  <div class="flow">
+    <div class="step"><span class="lbl">Bring in</span><h4>Your data lands</h4><p>Clinical, claims, imaging, social — each source arrives in its native form, no upfront reshaping.</p></div>
+    <span class="bigarrow">→</span>
+    <div class="step"><span class="lbl">Standardize</span><h4>One common model</h4><p>Everything is normalized to <b>FHIR</b>, the international healthcare standard. Many formats become one.</p></div>
+    <span class="bigarrow">→</span>
+    <div class="step"><span class="lbl">Build value</span><h4>Analytics &amp; AI</h4><p>Research models, care-management cockpits, segmentation, and AI insight — all on the same trusted base.</p></div>
+  </div>
+  <div class="body" style="grid-template-columns:1fr 1fr">
+    <div class="card">
+      <h3><span class="dot dot-do"></span>Why this matters</h3>
+      <ul>
+        <li>You standardize <b>once</b> — every solution reuses it instead of re-integrating.</li>
+        <li>New solutions plug into the same foundation, so adding capability is fast.</li>
+        <li>One governed, consistent dataset for clinicians, analysts, and researchers alike.</li>
+      </ul>
+    </div>
+    <div class="card value">
+      <h3><span class="dot dot-value"></span>The 10 solutions ahead</h3>
+      <ul>
+        <li><b>Nine generally available</b> — clinical, claims, social, imaging, research, care management, segmentation, outreach, and ambient documentation.</li>
+        <li><b>One in public preview</b> — multimodal AI insights.</li>
+        <li>All share the same foundation — that's what makes them work together.</li>
+      </ul>
+    </div>
+  </div>
+</section>`;
+
+stage.innerHTML = titleSlide + foundationSlide + SOLUTIONS.map(solutionSlide).join("");
+
+/* agenda buttons on title */
+const agenda = document.getElementById("agenda");
+agenda.innerHTML = SOLUTIONS.map((s,i)=>{
+  const tag = s.mandate ? `<span class="s req">★ Required</span>`
+    : s.avail==="preview" ? `<span class="s soon">Preview</span>`
+    : `<span class="s now">GA</span>`;
+  return `<button data-go="${i+2}"><span class="n">${s.n}</span>${s.title}${tag}</button>`;
+}).join("");
+
+/* ============ NAV ============ */
+const slides = Array.from(stage.querySelectorAll(".slide"));
+let cur = 0;
+const progress = document.getElementById("progress");
+const curEl = document.getElementById("cur");
+const totalEl = document.getElementById("total");
+totalEl.textContent = slides.length;
+
+function show(i){
+  cur = Math.max(0, Math.min(slides.length-1, i));
+  slides.forEach((s,idx)=>s.classList.toggle("active", idx===cur));
+  curEl.textContent = cur+1;
+  progress.style.width = ((cur+1)/slides.length*100)+"%";
+  const act = stage.querySelector(".slide.active"); if (act) act.scrollTop = 0;
+}
+const next=()=>show(cur+1), prev=()=>show(cur-1);
+
+document.getElementById("nextBtn").onclick = next;
+document.getElementById("prevBtn").onclick = prev;
+agenda.addEventListener("click", e=>{
+  const b = e.target.closest("button[data-go]");
+  if (b) show(parseInt(b.dataset.go,10));
+});
+
+document.addEventListener("keydown", e=>{
+  if (e.key==="ArrowRight"||e.key==="PageDown"||e.key===" "){ e.preventDefault(); next(); }
+  else if (e.key==="ArrowLeft"||e.key==="PageUp"){ e.preventDefault(); prev(); }
+  else if (e.key==="Home"){ show(0); }
+  else if (e.key==="End"){ show(slides.length-1); }
+  else if (e.key.toLowerCase()==="f"){
+    if(!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+  }
+});
+
+show(0);
+</script>
+</body>
+</html>
