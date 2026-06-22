@@ -60,6 +60,22 @@
             <small>Lowercase letters and numbers only. Max 12 chars.</small>
         </label>
 
+        <label class="checkbox-label">
+            <input type="checkbox" name="run_pipelines_on_deploy" id="run_pipelines_on_deploy_cb" value="true" checked>
+            {% if selected_flow == 'sampledata' %}
+            <span>Auto-run the solution pipelines after staging sample data</span>
+            <small>After the portal step, the deployer always detects which Healthcare data solutions you
+            deployed (clinical, SDOH, CMS claims, OMOP, DICOM imaging, care management) and stages each one's
+            built-in sample data into <code>Files/Ingest</code>. With this checked, it then runs their
+            pipelines for you in the correct, dependency-safe order. Uncheck to stop after staging and trigger
+            the pipelines yourself from Fabric.</small>
+            {% else %}
+            <span>Run the clinical ingestion pipeline once deploy finishes</span>
+            <small>Kicks off the clinical data foundation ingestion pipeline as soon as the Spark environment
+            has published. Uncheck to stop after wiring and trigger it yourself from Fabric later.</small>
+            {% endif %}
+        </label>
+
         <div class="form-actions">
             <button type="submit" class="cta-button">Download Deployment Package</button>
             <button type="button" class="help-button" aria-label="What you'll get"
@@ -116,7 +132,7 @@
         </details>
 
         <details class="deploy-step">
-            <summary>Pause: you deploy Data Foundations in the portal (~5 min)</summary>
+            <summary>Pause: you deploy Data Foundations in the portal (~10 min)</summary>
             <div class="deploy-step-body">
                 <p>
                     Healthcare data foundations can only be deployed from the
@@ -230,7 +246,7 @@
         </details>
 
         <details class="deploy-step">
-            <summary>Pause: you deploy Data Foundations <em>with sample data</em> (~5 min)</summary>
+            <summary>Pause: you deploy Data Foundations <em>with sample data</em> (~10 min)</summary>
             <div class="deploy-step-body">
                 <p>
                     The script gives you the direct workspace link and waits. In the
