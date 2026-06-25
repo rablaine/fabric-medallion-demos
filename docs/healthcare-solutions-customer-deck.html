@@ -106,6 +106,12 @@ code, .mono { font-family: Consolas, "Courier New", Courier, monospace; }
 .avail-ga { background: rgba(22,163,74,0.12); color: var(--cp-success); border-color: rgba(22,163,74,0.35); }
 .avail-preview { background: rgba(0,120,212,0.12); color: var(--cp-link); border-color: rgba(0,120,212,0.4); }
 .avail-req { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+.docs-link {
+  font-size: 0.78rem; font-weight: 700; text-decoration: none;
+  padding: 0.38rem 0.8rem; border-radius: 999px; white-space: nowrap;
+  background: var(--cp-surface); color: var(--cp-link); border: 1px solid var(--cp-border-strong);
+}
+.docs-link:hover { border-color: var(--cp-link); background: rgba(0,120,212,0.1); }
 .pills { margin-left: auto; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .mandate {
   display: flex; align-items: center; gap: 0.55rem;
@@ -270,6 +276,7 @@ kbd { font-family: inherit; font-size: 0.72rem; background: var(--cp-surface-sof
 const SOLUTIONS = [
   {
     n:"01", key:"clinical", avail:"ga",
+    docs:"https://learn.microsoft.com/industry/healthcare/healthcare-data-solutions/healthcare-data-foundations-overview",
     title:"Clinical Data Foundations",
     sub:"Turns raw clinical records into one standardized, queryable clinical history.",
     mandate:"It deploys the Bronze and Silver lakehouses that every other solution reads from — so wherever you start, these Fabric items are always in place.",
@@ -290,6 +297,7 @@ const SOLUTIONS = [
   },
   {
     n:"02", key:"claims", avail:"ga",
+    docs:"https://learn.microsoft.com/industry/healthcare/healthcare-data-solutions/claims-data-transformations-overview",
     title:"CMS Claims",
     sub:"Brings financial/claims data alongside clinical — the cost of care, not just the care.",
     does:[
@@ -308,6 +316,7 @@ const SOLUTIONS = [
   },
   {
     n:"03", key:"sdoh", avail:"ga",
+    docs:"https://learn.microsoft.com/industry/healthcare/healthcare-data-solutions/sdoh-datasets-transformations-overview",
     title:"Social Determinants of Health",
     sub:"Adds the non-clinical context — housing, food, environment — that drives ~80% of outcomes.",
     does:[
@@ -326,6 +335,7 @@ const SOLUTIONS = [
   },
   {
     n:"04", key:"dicom", avail:"ga",
+    docs:"https://learn.microsoft.com/industry/healthcare/healthcare-data-solutions/dicom-data-transformation-overview",
     title:"DICOM Imaging",
     sub:"Brings medical imaging into the unified record, linked to the patient.",
     does:[
@@ -344,6 +354,7 @@ const SOLUTIONS = [
   },
   {
     n:"05", key:"omop", avail:"ga",
+    docs:"https://learn.microsoft.com/industry/healthcare/healthcare-data-solutions/omop-transformations-overview",
     title:"OMOP Common Data Model",
     sub:"Reshapes your clinical data into the global standard used for research and population health.",
     does:[
@@ -362,6 +373,7 @@ const SOLUTIONS = [
   },
   {
     n:"06", key:"cma", avail:"ga",
+    docs:"https://learn.microsoft.com/industry/healthcare/healthcare-data-solutions/care-management-analytics-overview",
     title:"Care Management Analytics",
     sub:"The capstone — fuses clinical, claims, and social into one care-manager cockpit.",
     does:[
@@ -380,6 +392,7 @@ const SOLUTIONS = [
   },
   {
     n:"07", key:"d365ci", avail:"ga",
+    docs:"https://learn.microsoft.com/industry/healthcare/healthcare-data-solutions/customer-insights-data-preparation-overview",
     title:"Customer Insights — Patient Segmentation",
     sub:"Prepares your patient data for unified profiles and segmentation in Dynamics 365.",
     does:[
@@ -399,6 +412,7 @@ const SOLUTIONS = [
   },
   {
     n:"08", key:"outreach", avail:"ga",
+    docs:"https://learn.microsoft.com/industry/healthcare/healthcare-data-solutions/patient-outreach-analytics-overview",
     title:"Patient Outreach Analytics",
     sub:"Measures whether outreach actually drives appointments and engagement.",
     does:[
@@ -418,6 +432,7 @@ const SOLUTIONS = [
   },
   {
     n:"09", key:"dax", avail:"ga",
+    docs:"https://learn.microsoft.com/industry/healthcare/healthcare-data-solutions/dax-copilot-data-transformation-overview",
     title:"DAX Copilot — Ambient Documentation",
     sub:"Turns AI-assisted clinical conversation notes into structured, analyzable data.",
     does:[
@@ -437,6 +452,7 @@ const SOLUTIONS = [
   },
   {
     n:"10", key:"multimodal", avail:"preview",
+    docs:"https://learn.microsoft.com/industry/healthcare/healthcare-data-solutions/orchestrate-multimodal-ai-insights-overview",
     title:"Multimodal AI Insights",
     sub:"Applies healthcare AI to unstructured text and imaging — the data tables miss.",
     does:[
@@ -484,6 +500,7 @@ function solutionSlide(s){
     : `<span class="avail avail-ga">✓ Generally available</span>`;
   const mandateTag = s.mandate ? `<span class="avail avail-req">★ Required foundation</span>` : "";
   const mandateBanner = s.mandate ? `<div class="mandate">★ <span><b>Mandatory.</b> ${s.mandate}</span></div>` : "";
+  const docsLink = s.docs ? `<a class="docs-link" href="${s.docs}" target="_blank" rel="noopener">Official docs ↗</a>` : "";
   const does = s.does.map(t=>`<li>${t}</li>`).join("");
   const value = s.value.map(t=>`<li>${t}</li>`).join("");
   const dep = s.dep ? `<div class="dep">${s.dep}</div>` : "";
@@ -491,7 +508,7 @@ function solutionSlide(s){
     <div class="slide-head">
       <span class="idx">${s.n}</span>
       <div><h2>${s.title}</h2><div class="sub">${s.sub}</div></div>
-      <div class="pills">${mandateTag}${pill}</div>
+      <div class="pills">${mandateTag}${pill}${docsLink}</div>
     </div>
     ${mandateBanner}
     <div class="body">
@@ -538,6 +555,7 @@ const foundationSlide = `<section class="slide" data-key="foundation">
     <span class="idx">00</span>
     <div><h2>How It All Fits Together</h2>
     <div class="sub">Every solution rides on one simple idea: bring data in, standardize it once, then build value on top.</div></div>
+    <div class="pills"><a class="docs-link" href="https://learn.microsoft.com/industry/healthcare/healthcare-data-solutions/overview" target="_blank" rel="noopener">Official docs ↗</a></div>
   </div>
   <div class="flow">
     <div class="step"><span class="lbl">Bring in</span><h4>Your data lands</h4><p>Clinical, claims, imaging, social — each source arrives in its native form, no upfront reshaping.</p></div>
